@@ -1,6 +1,6 @@
 # EDMFormer Project (SongFormer Retraining on Vertex AI)
 
-This repository provisions ingestion, preprocessing, and training orchestration for retraining SongFormer (EDMFormer variant) on Google Cloud Vertex AI. It assumes audio lives in Google Drive and is migrated to Cloud Storage before SSL embedding extraction (MuQ/MusicFM) and TPU training.
+This repository provisions ingestion, preprocessing, and training orchestration for retraining EDMFormer (SongFormer variant) on Google Cloud Vertex AI. It assumes audio lives in Google Drive and is migrated to Cloud Storage before SSL embedding extraction (MuQ/MusicFM) and TPU training.
 
 ## Quick Start
 
