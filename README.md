@@ -1,4 +1,4 @@
-# SongFormer Cloud Retrain (EDMFormer on Vertex AI)
+# EDMFormer Project (SongFormer Retraining on Vertex AI)
 
 This repository provisions ingestion, preprocessing, and training orchestration for retraining SongFormer (EDMFormer variant) on Google Cloud Vertex AI. It assumes audio lives in Google Drive and is migrated to Cloud Storage before SSL embedding extraction (MuQ/MusicFM) and TPU training.
 
@@ -22,11 +22,11 @@ This repository provisions ingestion, preprocessing, and training orchestration 
 
 6. Build and push images
    - Preprocessing (GPU):
-     - `docker build -f docker/preprocessing.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/songformer-preprocess:latest .`
-     - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/songformer-preprocess:latest`
+   - `docker build -f docker/preprocessing.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-preprocess:latest .`
+   - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-preprocess:latest`
    - Training (TPU):
-     - `docker build -f docker/training.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/songformer-train:latest .`
-     - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/songformer-train:latest`
+   - `docker build -f docker/training.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train:latest .`
+   - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train:latest`
 
 7. Compile the Vertex AI pipeline
    - `python pipelines/compile_pipeline.py --output pipeline.json`

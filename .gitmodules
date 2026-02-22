@@ -1,0 +1,6 @@
+[submodule "third_party/SongFormer"]
+	path = third_party/SongFormer
+	url = https://github.com/25ohms/EDMFormer
+[submodule "EDMFormer"]
+	path = EDMFormer
+	url = https://github.com/25ohms/EDMFormer.git

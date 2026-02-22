@@ -13,8 +13,8 @@ from components.preprocess_op import preprocess_op
 from components.train_op import train_op
 
 
-@dsl.pipeline(name="songformer-retrain")
-def songformer_pipeline(
+@dsl.pipeline(name="edmformer-retrain")
+def edmformer_pipeline(
     labels_jsonl: str,
     bucket_name: str,
     split_ids_path: str = "split_ids.txt",
@@ -57,7 +57,7 @@ def main() -> None:
     args = parser.parse_args()
 
     compiler.Compiler().compile(
-        pipeline_func=songformer_pipeline,
+        pipeline_func=edmformer_pipeline,
         package_path=args.output,
         pipeline_root=args.pipeline_root,
     )
