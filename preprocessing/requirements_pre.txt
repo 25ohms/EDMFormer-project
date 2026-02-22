@@ -1,0 +1,11 @@
+numpy
+scipy
+soundfile
+tqdm
+torch
+torchaudio
+google-cloud-storage
+# MuQ model package (replace with actual source)
+<PLACEHOLDER_REQUIRED_FIELD_MANUAL_FILL>
+# MusicFM model package (replace with actual source)
+<PLACEHOLDER_REQUIRED_FIELD_MANUAL_FILL>
