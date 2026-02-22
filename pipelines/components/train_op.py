@@ -12,7 +12,7 @@ def train_op(
     label_path: str,
     split_ids_path: str,
     input_embedding_dir: str,
-    config_path: str = "third_party/SongFormer/configs/SongFormer.yaml",
+    config_path: str = "third_party/EDMFormer/configs/SongFormer.yaml",
 ):
     return dsl.ContainerSpec(
         image="<PLACEHOLDER_REQUIRED_FIELD_MANUAL_FILL>",

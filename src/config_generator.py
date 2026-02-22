@@ -37,7 +37,7 @@ def main() -> None:
         "--config-path",
         default=os.environ.get(
             "SONGFORMER_CONFIG_PATH",
-            "third_party/SongFormer/configs/SongFormer.yaml",
+            "third_party/EDMFormer/configs/SongFormer.yaml",
         ),
     )
     parser.add_argument(

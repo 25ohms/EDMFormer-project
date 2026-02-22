@@ -4,8 +4,8 @@ This repository provisions ingestion, preprocessing, and training orchestration 
 
 ## Quick Start
 
-1. Initialize the SongFormer submodule
-   - `git submodule add https://github.com/25ohms/EDMFormer third_party/SongFormer`
+1. Initialize the EDMFormer submodule
+   - `git submodule add https://github.com/25ohms/EDMFormer third_party/EDMFormer`
    - `git submodule update --init --recursive`
 
 2. Fill in environment placeholders
@@ -54,5 +54,5 @@ Recommended minimum roles for the pipeline service account:
 
 ## Notes
 
-- `src/config_generator.py` rewrites `third_party/SongFormer/configs/SongFormer.yaml` at job start based on GCS paths.
+- `src/config_generator.py` rewrites `third_party/EDMFormer/configs/SongFormer.yaml` at job start based on GCS paths.
 - `src/trainer_adapter.py` wraps SongFormer training to use `torch_xla` and the BCE + TV loss.

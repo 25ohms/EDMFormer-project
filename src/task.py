@@ -19,7 +19,7 @@ def main() -> None:
         "--config-path",
         default=os.environ.get(
             "SONGFORMER_CONFIG_PATH",
-            "third_party/SongFormer/configs/SongFormer.yaml",
+            "third_party/EDMFormer/configs/SongFormer.yaml",
         ),
     )
     parser.add_argument(
@@ -38,7 +38,7 @@ def main() -> None:
         "--train-script",
         default=os.environ.get(
             "SONGFORMER_TRAIN_SCRIPT",
-            "third_party/SongFormer/train.py",
+            "third_party/EDMFormer/train.py",
         ),
     )
     parser.add_argument(
