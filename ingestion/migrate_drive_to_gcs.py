@@ -11,6 +11,7 @@ import os
 import sys
 from pathlib import Path
 from typing import Optional
+import google.auth
 
 from google.cloud import storage
 
@@ -39,20 +40,18 @@ def load_labels(labels_jsonl_path: Path) -> list[dict]:
                 raise ValueError(f"Invalid JSON on line {line_no}") from exc
             if "id" not in record or "file_path" not in record:
                 raise ValueError(
-                    f"Missing required fields on line {line_no}; need 'id' and 'file_path'"
+                    f"Missing required fields on line {
+                        line_no}; need 'id' and 'file_path'"
                 )
             records.append(record)
     return records
 
 
-def get_drive_service(service_account_json: Optional[str]) -> object:
-    if service_account_json:
-        creds = service_account.Credentials.from_service_account_file(
-            service_account_json, scopes=DRIVE_SCOPES
-        )
-    else:
-        creds = None
-    return build("drive", "v3", credentials=creds)
+def get_drive_service(unused_arg=None):
+    # This automatically finds the credentials you created in Step 1
+    credentials, project = google.auth.default()
+    service = build("drive", "v3", credentials=credentials)
+    return service
 
 
 def resolve_path_to_file_id(service, file_path: str) -> str:
@@ -67,7 +66,8 @@ def resolve_path_to_file_id(service, file_path: str) -> str:
             " and mimeType = 'application/vnd.google-apps.folder'" if not is_last else ""
         )
         query = (
-            f"name = '{part}' and '{parent_id}' in parents and trashed = false{mime_filter}"
+            f"name = '{part}' and '{
+                parent_id}' in parents and trashed = false{mime_filter}"
         )
         response = (
             service.files()
@@ -108,8 +108,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Migrate Google Drive audio to GCS using labels.jsonl"
     )
-    parser.add_argument("--labels-jsonl", required=True, help="Path to labels.jsonl")
-    parser.add_argument("--bucket", required=True, help="Target GCS bucket name")
+    parser.add_argument("--labels-jsonl", required=True,
+                        help="Path to labels.jsonl")
+    parser.add_argument("--bucket", required=True,
+                        help="Target GCS bucket name")
     parser.add_argument(
         "--drive-sa-json",
         default=os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"),
@@ -145,12 +147,14 @@ def main() -> None:
             print(f"Skipping existing gs://{args.bucket}/{gcs_blob_name}")
             continue
 
-        drive_file_id = resolve_path_to_file_id(drive_service, record["file_path"])
+        drive_file_id = resolve_path_to_file_id(
+            drive_service, record["file_path"])
         audio_bytes = download_drive_file(drive_service, drive_file_id)
         upload_to_gcs(args.bucket, gcs_blob_name, audio_bytes)
         print(f"Uploaded gs://{args.bucket}/{gcs_blob_name}")
 
-    Path(args.split_ids_out).write_text("\n".join(split_ids) + "\n", encoding="utf-8")
+    Path(args.split_ids_out).write_text(
+        "\n".join(split_ids) + "\n", encoding="utf-8")
     print(f"Wrote {len(split_ids)} ids to {args.split_ids_out}")
 
 
