@@ -39,10 +39,7 @@ def load_labels(labels_jsonl_path: Path) -> list[dict]:
             except json.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSON on line {line_no}") from exc
             if "id" not in record or "file_path" not in record:
-                raise ValueError(
-                    f"Missing required fields on line {
-                        line_no}; need 'id' and 'file_path'"
-                )
+                raise ValueError(f"Missing required fields on line {line_no}; need 'id' and 'file_path'")
             records.append(record)
     return records
 
