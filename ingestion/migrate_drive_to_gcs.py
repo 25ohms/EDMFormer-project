@@ -56,7 +56,7 @@ def resolve_path_to_file_id(service, file_path: str) -> str:
     if not parts:
         raise ValueError("file_path is empty")
 
-    parent_id = "root"
+    parent_id = "1aJXWm7RGmaNr9QQ2m0hxp0gawgVm0_DS"
     for idx, part in enumerate(parts):
         is_last = idx == len(parts) - 1
         mime_filter = (
