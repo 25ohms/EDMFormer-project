@@ -21,7 +21,9 @@ from huggingface_hub import snapshot_download
 
 from muq import MuQ
 
-SEGMENT_SECONDS = (30, 420)
+WIN_SIZE = 30
+HOP_SIZE = 30
+WRAP_SIZE = 420
 TARGET_SAMPLE_RATE = 24000
 
 
@@ -224,27 +226,57 @@ def main() -> None:
         finally:
             local_path.unlink(missing_ok=True)
 
-        for segment_seconds in SEGMENT_SECONDS:
-            for start_sec, segment in segment_audio(
-                waveform, segment_seconds, TARGET_SAMPLE_RATE
-            ):
-                wavs = segment.unsqueeze(0).to(device)
-                with torch.no_grad():
-                    output = muq(wavs, output_hidden_states=False)
-                if hasattr(output, "last_hidden_state"):
-                    feats = output.last_hidden_state
-                elif isinstance(output, (tuple, list)):
-                    feats = output[0]
-                else:
-                    feats = output
-
-                embedding = feats.squeeze(0).detach().cpu().numpy().astype(np.float32)
-                subdir = f"muq_{segment_seconds}s"
-                out_blob = (
-                    f"{args.output_root.rstrip('/')}/{subdir}/{audio_id}_{start_sec}.npy"
+        # 30s embeddings wrapped into 420s windows
+        wrap_subdir = "muq_30s"
+        for wrap_start in range(0, 10000, WRAP_SIZE):
+            if wrap_start * TARGET_SAMPLE_RATE >= waveform.numel():
+                break
+            layer_embeds: list[np.ndarray] = []
+            for j in range(0, WRAP_SIZE, HOP_SIZE):
+                start_idx = (wrap_start + j) * TARGET_SAMPLE_RATE
+                end_idx = min(
+                    (wrap_start + j + WIN_SIZE) * TARGET_SAMPLE_RATE, waveform.numel()
                 )
-                upload_npy(client, args.bucket, out_blob, embedding)
-                print(f"Wrote gs://{args.bucket}/{out_blob}")
+                if start_idx >= waveform.numel():
+                    break
+                audio_seg = waveform[start_idx:end_idx]
+                if audio_seg.numel() < 1025:
+                    break
+                wavs = audio_seg.unsqueeze(0).to(device)
+                with torch.no_grad():
+                    output = muq(wavs, output_hidden_states=True)
+                hidden_states = output["hidden_states"] if isinstance(output, dict) else output.hidden_states
+                layer_embeds.append(
+                    hidden_states[10].detach().cpu().float().numpy()
+                )
+
+            if not layer_embeds:
+                continue
+
+            wrap_embedding = np.concatenate(layer_embeds, axis=1)
+            out_blob = (
+                f"{args.output_root.rstrip('/')}/{wrap_subdir}/{audio_id}_{wrap_start}.npy"
+            )
+            upload_npy(client, args.bucket, out_blob, wrap_embedding)
+            print(f"Wrote gs://{args.bucket}/{out_blob}")
+
+        # 420s embeddings (single window)
+        full_subdir = "muq_420s"
+        for start_sec, segment in segment_audio(
+            waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
+        ):
+            if segment.numel() < 1025:
+                break
+            wavs = segment.unsqueeze(0).to(device)
+            with torch.no_grad():
+                output = muq(wavs, output_hidden_states=True)
+            hidden_states = output["hidden_states"] if isinstance(output, dict) else output.hidden_states
+            embedding = hidden_states[10].detach().cpu().float().numpy()
+            out_blob = (
+                f"{args.output_root.rstrip('/')}/{full_subdir}/{audio_id}_{start_sec}.npy"
+            )
+            upload_npy(client, args.bucket, out_blob, embedding)
+            print(f"Wrote gs://{args.bucket}/{out_blob}")
 
 
 if __name__ == "__main__":

@@ -19,7 +19,9 @@ from google.cloud import storage
 import torch
 import torchaudio
 
-SEGMENT_SECONDS = (30, 420)
+WIN_SIZE = 30
+HOP_SIZE = 30
+WRAP_SIZE = 420
 TARGET_SAMPLE_RATE = 24000
 MUSICFM_HF_BASE = "https://huggingface.co/minzwon/MusicFM/resolve/main"
 
@@ -191,8 +193,8 @@ def main() -> None:
     parser.add_argument(
         "--layer-ix",
         type=int,
-        default=7,
-        help="Layer index for get_latent (default: 7)",
+        default=10,
+        help="Layer index for embeddings (default: 10)",
     )
     parser.add_argument(
         "--use-flash",
@@ -270,22 +272,58 @@ def main() -> None:
         finally:
             local_path.unlink(missing_ok=True)
 
-        for segment_seconds in SEGMENT_SECONDS:
-            for start_sec, segment in segment_audio(
-                waveform, segment_seconds, TARGET_SAMPLE_RATE
-            ):
-                wavs = segment.unsqueeze(0).to(device)
+        # 30s embeddings wrapped into 420s windows
+        wrap_subdir = "musicfm_30s"
+        for wrap_start in range(0, 10000, WRAP_SIZE):
+            if wrap_start * TARGET_SAMPLE_RATE >= waveform.numel():
+                break
+            layer_embeds: list[np.ndarray] = []
+            for j in range(0, WRAP_SIZE, HOP_SIZE):
+                start_idx = (wrap_start + j) * TARGET_SAMPLE_RATE
+                end_idx = min(
+                    (wrap_start + j + WIN_SIZE) * TARGET_SAMPLE_RATE,
+                    waveform.numel(),
+                )
+                if start_idx >= waveform.numel():
+                    break
+                audio_seg = waveform[start_idx:end_idx]
+                if audio_seg.numel() < 1025:
+                    break
+                wavs = audio_seg.unsqueeze(0).to(device)
                 if args.fp16:
                     wavs = wavs.half()
                 with torch.no_grad():
-                    emb = musicfm.get_latent(wavs, layer_ix=args.layer_ix)
-                embedding = emb.squeeze(0).detach().cpu().numpy().astype(np.float32)
-                subdir = f"musicfm_{segment_seconds}s"
-                out_blob = (
-                    f"{args.output_root.rstrip('/')}/{subdir}/{audio_id}_{start_sec}.npy"
+                    _, hidden_states = musicfm.get_predictions(wavs)
+                layer_embeds.append(
+                    hidden_states[args.layer_ix].detach().cpu().float().numpy()
                 )
-                upload_npy(client, args.bucket, out_blob, embedding)
-                print(f"Wrote gs://{args.bucket}/{out_blob}")
+
+            if not layer_embeds:
+                continue
+
+            wrap_embedding = np.concatenate(layer_embeds, axis=1)
+            out_blob = f"{args.output_root.rstrip('/')}/{wrap_subdir}/{audio_id}_{wrap_start}.npy"
+            upload_npy(client, args.bucket, out_blob, wrap_embedding)
+            print(f"Wrote gs://{args.bucket}/{out_blob}")
+
+        # 420s embeddings (single window)
+        full_subdir = "musicfm_420s"
+        for start_sec, segment in segment_audio(
+            waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
+        ):
+            if segment.numel() < 1025:
+                break
+            wavs = segment.unsqueeze(0).to(device)
+            if args.fp16:
+                wavs = wavs.half()
+            with torch.no_grad():
+                _, hidden_states = musicfm.get_predictions(wavs)
+            embedding = hidden_states[args.layer_ix].detach().cpu().float().numpy()
+            out_blob = (
+                f"{args.output_root.rstrip('/')}/{full_subdir}/{audio_id}_{start_sec}.npy"
+            )
+            upload_npy(client, args.bucket, out_blob, embedding)
+            print(f"Wrote gs://{args.bucket}/{out_blob}")
 
 
 if __name__ == "__main__":

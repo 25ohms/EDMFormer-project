@@ -9,6 +9,8 @@ This folder contains GPU-focused extraction scripts for MuQ and MusicFM embeddin
 
 Each file is named `<id>_<start_sec>.npy`.
 
+Note: the `*_30s` directories store embeddings for 420s windows that are built by concatenating 30s sub-windows (wrap-420 format), matching EDMFormer’s expected input.
+
 ## Loading Model Weights in the Container
 
 There are two common options for making MuQ and MusicFM weights available inside the preprocessing container:
@@ -44,3 +46,7 @@ MusicFM (checkpoint paths):
 - If the default GCS files are missing, the script downloads them from Hugging Face and uploads them to GCS automatically.
 
 Both models expect 24kHz audio input.
+
+Embedding layer defaults:
+- MuQ: layer 10 (hard-coded to match EDMFormer scripts).
+- MusicFM: layer 10 (`--layer-ix`).
