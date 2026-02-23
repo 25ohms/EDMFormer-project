@@ -131,6 +131,94 @@ def segment_audio(
     return segments
 
 
+def maybe_empty_cuda_cache(device: str) -> None:
+    if device.startswith("cuda") and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def extract_conformer_layer(
+    conformer: torch.nn.Module,
+    hidden_states: torch.Tensor,
+    layer_ix: int,
+    attention_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
+    num_layers = len(conformer.layers)
+    if layer_ix < 0 or layer_ix > num_layers:
+        raise ValueError(
+            f"layer_ix must be in [0, {num_layers}] for this model, got {layer_ix}"
+        )
+
+    captured: dict[str, torch.Tensor] = {}
+    handle = None
+    try:
+        if layer_ix == num_layers:
+            outputs = conformer(
+                hidden_states,
+                attention_mask=attention_mask,
+                output_hidden_states=False,
+            )
+            tensor = (
+                outputs["last_hidden_state"]
+                if isinstance(outputs, dict)
+                else outputs.last_hidden_state
+            )
+            return tensor.detach()
+
+        if layer_ix == 0:
+            def _pre_hook(_module, inputs):
+                if "tensor" not in captured:
+                    captured["tensor"] = inputs[0].detach()
+
+            handle = conformer.layers[0].register_forward_pre_hook(_pre_hook)
+        else:
+            target_layer = layer_ix - 1
+
+            def _hook(_module, _inputs, output):
+                out = output[0] if isinstance(output, tuple) else output
+                captured["tensor"] = out.detach()
+
+            handle = conformer.layers[target_layer].register_forward_hook(_hook)
+
+        _ = conformer(
+            hidden_states,
+            attention_mask=attention_mask,
+            output_hidden_states=False,
+        )
+    finally:
+        if handle is not None:
+            handle.remove()
+
+    if "tensor" not in captured:
+        raise RuntimeError(f"Failed to capture layer {layer_ix} output.")
+    return captured["tensor"]
+
+
+def extract_muq_layer(
+    muq: MuQ, wavs: torch.Tensor, layer_ix: int
+) -> torch.Tensor:
+    features = muq.model.preprocessing(wavs, features=["melspec_2048"])
+    features = muq.model.normalize(features)
+    conv_out = muq.model.conv(features["melspec_2048"])
+    return extract_conformer_layer(muq.model.conformer, conv_out, layer_ix)
+
+
+def extract_muq_embedding(
+    muq: MuQ,
+    audio_seg: torch.Tensor,
+    device: str,
+    layer_ix: int,
+) -> np.ndarray | None:
+    if audio_seg.numel() < 1025:
+        return None
+    wavs = audio_seg.unsqueeze(0).to(device)
+    with torch.no_grad():
+        layer_tensor = extract_muq_layer(muq, wavs, layer_ix)
+    embedding = layer_tensor.cpu().float().numpy()
+    del wavs, layer_tensor
+    maybe_empty_cuda_cache(device)
+    return embedding
+
+
 def upload_npy(
     client: storage.Client, bucket_name: str, blob_name: str, array: np.ndarray
 ) -> None:
@@ -242,13 +330,10 @@ def main() -> None:
                 audio_seg = waveform[start_idx:end_idx]
                 if audio_seg.numel() < 1025:
                     break
-                wavs = audio_seg.unsqueeze(0).to(device)
-                with torch.no_grad():
-                    output = muq(wavs, output_hidden_states=True)
-                hidden_states = output["hidden_states"] if isinstance(output, dict) else output.hidden_states
-                layer_embeds.append(
-                    hidden_states[10].detach().cpu().float().numpy()
-                )
+                embedding = extract_muq_embedding(muq, audio_seg, device, layer_ix=10)
+                if embedding is None:
+                    break
+                layer_embeds.append(embedding)
 
             if not layer_embeds:
                 continue
@@ -267,11 +352,22 @@ def main() -> None:
         ):
             if segment.numel() < 1025:
                 break
-            wavs = segment.unsqueeze(0).to(device)
-            with torch.no_grad():
-                output = muq(wavs, output_hidden_states=True)
-            hidden_states = output["hidden_states"] if isinstance(output, dict) else output.hidden_states
-            embedding = hidden_states[10].detach().cpu().float().numpy()
+            layer_embeds: list[np.ndarray] = []
+            for j in range(0, WRAP_SIZE, HOP_SIZE):
+                start_idx = j * TARGET_SAMPLE_RATE
+                end_idx = min((j + WIN_SIZE) * TARGET_SAMPLE_RATE, segment.numel())
+                if start_idx >= segment.numel():
+                    break
+                audio_seg = segment[start_idx:end_idx]
+                embedding = extract_muq_embedding(muq, audio_seg, device, layer_ix=10)
+                if embedding is None:
+                    break
+                layer_embeds.append(embedding)
+
+            if not layer_embeds:
+                continue
+
+            embedding = np.concatenate(layer_embeds, axis=1)
             out_blob = (
                 f"{args.output_root.rstrip('/')}/{full_subdir}/{audio_id}_{start_sec}.npy"
             )
