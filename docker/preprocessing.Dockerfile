@@ -18,6 +18,9 @@ COPY preprocessing/requirements_pre.txt /app/requirements_pre.txt
 RUN python3 -m pip install --upgrade pip \
     && python3 -m pip install -r /app/requirements_pre.txt
 
+# torchcodec for audio/video decode support (aligns with installed torch)
+RUN python3 -m pip install torchcodec
+
 # MusicFM is not pip-packaged; clone source and add to PYTHONPATH
 ARG MUSICFM_REPO=https://github.com/minzwon/musicfm.git
 ARG MUSICFM_REF=master
