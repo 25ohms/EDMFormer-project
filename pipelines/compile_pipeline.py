@@ -18,10 +18,14 @@ def edmformer_pipeline(
     labels_jsonl: str,
     bucket_name: str,
     split_ids_path: str = "split_ids.txt",
+    eval_split_ids_path: str = "",
     embeddings_root: str = "embeddings",
     preprocess_dummy_flag: str = "",
 ):
     split_ids_gcs = f"gs://{bucket_name}/{split_ids_path}"
+    eval_split_ids_gcs = (
+        f"gs://{bucket_name}/{eval_split_ids_path}" if eval_split_ids_path else ""
+    )
     embeddings_gcs = f"gs://{bucket_name}/{embeddings_root}"
 
     ingest_task = ingest_op(
@@ -41,6 +45,7 @@ def edmformer_pipeline(
     train_task = train_op(
         label_path=labels_jsonl,
         split_ids_path=split_ids_gcs,
+        eval_split_ids_path=eval_split_ids_gcs,
         input_embedding_dir=embeddings_gcs,
     )
     train_task.after(preprocess_task)

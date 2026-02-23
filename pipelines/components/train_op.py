@@ -11,8 +11,11 @@ from kfp.v2 import dsl
 def train_op(
     label_path: str,
     split_ids_path: str,
+    eval_split_ids_path: str = "",
     input_embedding_dir: str,
-    config_path: str = "third_party/EDMFormer/configs/SongFormer.yaml",
+    checkpoint_dir: str = "",
+    embedding_subdirs: str = "",
+    config_path: str = "third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml",
 ):
     return dsl.ContainerSpec(
         image="<PLACEHOLDER_REQUIRED_FIELD_MANUAL_FILL>",
@@ -21,6 +24,9 @@ def train_op(
         env=[
             dsl.EnvVar(name="LABEL_PATH_GCS", value=label_path),
             dsl.EnvVar(name="SPLIT_IDS_PATH_GCS", value=split_ids_path),
+            dsl.EnvVar(name="EVAL_SPLIT_IDS_PATH_GCS", value=eval_split_ids_path),
             dsl.EnvVar(name="INPUT_EMBEDDING_DIR_GCS", value=input_embedding_dir),
+            dsl.EnvVar(name="CHECKPOINT_DIR_GCS", value=checkpoint_dir),
+            dsl.EnvVar(name="EMBEDDING_SUBDIRS", value=embedding_subdirs),
         ],
     )
