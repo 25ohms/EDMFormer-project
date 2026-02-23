@@ -63,8 +63,7 @@ def resolve_path_to_file_id(service, file_path: str) -> str:
             " and mimeType = 'application/vnd.google-apps.folder'" if not is_last else ""
         )
         query = (
-            f"name = '{part}' and '{
-                parent_id}' in parents and trashed = false{mime_filter}"
+            f"name = '{part}' and '{parent_id}' in parents and trashed = false{mime_filter}"
         )
         response = (
             service.files()
