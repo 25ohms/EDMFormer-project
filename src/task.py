@@ -103,12 +103,15 @@ def main() -> None:
         "--dataset-type",
         default=os.environ.get("DATASET_TYPE", "EDMFormer"),
     )
+    train_backend = os.environ.get("TRAIN_BACKEND", "GPU").upper()
+    default_train_script = (
+        "src/tpu_train.py"
+        if train_backend == "TPU"
+        else "third_party/EDMFormer/src/SongFormer/train/train.py"
+    )
     parser.add_argument(
         "--train-script",
-        default=os.environ.get(
-            "SONGFORMER_TRAIN_SCRIPT",
-            "third_party/EDMFormer/src/SongFormer/train/train.py",
-        ),
+        default=os.environ.get("SONGFORMER_TRAIN_SCRIPT", default_train_script),
     )
     parser.add_argument(
         "--init-seed",
