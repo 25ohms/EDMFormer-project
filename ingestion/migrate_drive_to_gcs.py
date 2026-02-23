@@ -62,8 +62,9 @@ def resolve_path_to_file_id(service, file_path: str) -> str:
         mime_filter = (
             " and mimeType = 'application/vnd.google-apps.folder'" if not is_last else ""
         )
+        escaped_part = part.replace("'", "\\'")
         query = (
-            f"name = '{part}' and '{parent_id}' in parents and trashed = false{mime_filter}"
+            f"name = '{escaped_part}' and '{parent_id}' in parents and trashed = false{mime_filter}"
         )
         response = (
             service.files()
