@@ -5,7 +5,7 @@ This repository provisions ingestion, preprocessing, and training orchestration 
 ## Quick Start
 
 1. Initialize the EDMFormer submodule
-   - `git submodule add https://github.com/25ohms/EDMFormer third_party/EDMFormer`
+   - `git submodule add <EDMFORMER_REPO_URL> third_party/EDMFormer`
    - `git submodule update --init --recursive`
 
 2. Fill in environment placeholders
@@ -24,15 +24,19 @@ This repository provisions ingestion, preprocessing, and training orchestration 
    - Preprocessing (GPU):
    - `docker build -f docker/preprocessing.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-preprocess:latest .`
    - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-preprocess:latest`
-   - Training (TPU):
+   - Training (GPU):
    - `docker build -f docker/training.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train:latest .`
    - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train:latest`
+   - Training (TPU):
+   - `docker build -f docker/training_tpu.Dockerfile -t ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train-tpu:latest .`
+   - `docker push ${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train-tpu:latest`
 
 7. Compile the Vertex AI pipeline
    - `python pipelines/compile_pipeline.py --output pipeline.json`
 
 8. Submit the pipeline in Vertex AI
    - Upload `pipeline.json` in the Vertex AI Pipelines UI or via `gcloud ai pipelines run`.
+   - For TPU jobs, use the TPU image and set `TRAIN_BACKEND=TPU` in the environment.
 
 ## Service Accounts and IAM
 
@@ -55,4 +59,36 @@ Recommended minimum roles for the pipeline service account:
 ## Notes
 
 - `src/config_generator.py` rewrites `third_party/EDMFormer/configs/SongFormer.yaml` at job start based on GCS paths.
-- `src/trainer_adapter.py` wraps SongFormer training to use `torch_xla` and the BCE + TV loss.
+- `src/trainer_adapter.py` is not used by the current pipeline. TPU training uses `src/tpu_train.py` with `torch_xla`.
+- `src/edmformer_gcs_dataset.py` streams labels, splits, and embeddings directly from GCS (`gs://`).
+
+## GPU / TPU Toggle
+
+Use `TRAIN_BACKEND` to control the training backend.
+
+- GPU (default):
+  - Image: `docker/training.Dockerfile`
+  - `TRAIN_BACKEND=GPU`
+  - Vertex AI machine type: `g2-standard-8` + `NVIDIA_L4`
+- TPU:
+  - Image: `docker/training_tpu.Dockerfile`
+  - `TRAIN_BACKEND=TPU`
+  - Vertex AI machine type: `cloud-tpu` + `TPU_V3`
+
+## Example: GPU Custom Job
+
+```bash
+gcloud ai custom-jobs create \
+  --region=${REGION} \
+  --display-name=<JOB_NAME> \
+  --worker-pool-spec=machine-type=g2-standard-8,accelerator-type=NVIDIA_L4,accelerator-count=1,replica-count=1,container-image-uri=${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train:latest,env=TRAIN_BACKEND=GPU,env=LABEL_PATH_GCS=gs://<BUCKET>/metadata/dataset.jsonl,env=SPLIT_IDS_PATH_GCS=gs://<BUCKET>/metadata/train.txt,env=EVAL_SPLIT_IDS_PATH_GCS=gs://<BUCKET>/metadata/val.txt,env=INPUT_EMBEDDING_DIR_GCS=gs://<BUCKET>/embeddings,env=EMBEDDING_SUBDIRS=musicfm_30s,muq_30s,musicfm_420s,muq_420s,env=CHECKPOINT_DIR_GCS=gs://<BUCKET>/checkpoints/<RUN_ID>,env=INIT_SEED=42
+```
+
+## Example: TPU Custom Job
+
+```bash
+gcloud ai custom-jobs create \
+  --region=${REGION} \
+  --display-name=<JOB_NAME> \
+  --worker-pool-spec=machine-type=cloud-tpu,accelerator-type=TPU_V3,accelerator-count=8,replica-count=1,container-image-uri=${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/edmformer-train-tpu:latest,env=TRAIN_BACKEND=TPU,env=LABEL_PATH_GCS=gs://<BUCKET>/metadata/dataset.jsonl,env=SPLIT_IDS_PATH_GCS=gs://<BUCKET>/metadata/train.txt,env=EVAL_SPLIT_IDS_PATH_GCS=gs://<BUCKET>/metadata/val.txt,env=INPUT_EMBEDDING_DIR_GCS=gs://<BUCKET>/embeddings,env=EMBEDDING_SUBDIRS=musicfm_30s,muq_30s,musicfm_420s,muq_420s,env=CHECKPOINT_DIR_GCS=gs://<BUCKET>/checkpoints/<RUN_ID>,env=INIT_SEED=42
+```

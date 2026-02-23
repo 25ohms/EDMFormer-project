@@ -201,6 +201,10 @@ def main() -> None:
         train_args = ensure_arg(train_args, "--checkpoint_dir", str(local_checkpoint_dir))
 
     train_script = Path(args.train_script).resolve()
+    if train_backend == "TPU" and "tpu_train.py" not in train_script.as_posix():
+        raise SystemExit(
+            "TRAIN_BACKEND=TPU requires --train-script to point to src/tpu_train.py."
+        )
     workdir = Path("third_party/EDMFormer/src/SongFormer").resolve()
     repo_root = Path(__file__).resolve().parents[1]
     src_root = repo_root / "src"
