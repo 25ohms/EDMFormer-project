@@ -23,3 +23,24 @@ There are two common options for making MuQ and MusicFM weights available inside
      - `gsutil cp gs://<BUCKET>/weights/musicfm.pt /opt/weights/musicfm.pt`
 
 Update `extract_muq.py` and `extract_musicfm.py` to load the model checkpoints from those paths before running extraction.
+
+## Source Code Installation
+
+- MuQ is installed via pip from the GitHub repo in `requirements_pre.txt`.
+- MusicFM is cloned into the image in `docker/preprocessing.Dockerfile` and exposed via `PYTHONPATH=/app`.
+
+To pin MusicFM to a commit or tag, build with:
+- `--build-arg MUSICFM_REF=<commit-or-tag>`
+
+## Runtime Configuration
+
+MuQ (Hugging Face model id):
+- `MUQ_MODEL_NAME` (default: `OpenMuQ/MuQ-large-msd-iter`)
+- If the model is not available in `MUQ_GCS_PREFIX`, the script downloads from Hugging Face and uploads to `gs://edmformer-data/metadata/muq/<model-id>`.
+
+MusicFM (checkpoint paths):
+- `MUSICFM_STAT_PATH` and `MUSICFM_MODEL_PATH` can be local paths or `gs://` URIs.
+- If not provided, defaults to `gs://edmformer-data/metadata/msd_stats.json` and `gs://edmformer-data/metadata/pretrained_msd.pt`.
+- If the default GCS files are missing, the script downloads them from Hugging Face and uploads them to GCS automatically.
+
+Both models expect 24kHz audio input.

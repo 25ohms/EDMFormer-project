@@ -5,7 +5,13 @@ tqdm
 torch
 torchaudio
 google-cloud-storage
-# MuQ model package (replace with actual source)
-<PLACEHOLDER_REQUIRED_FIELD_MANUAL_FILL>
-# MusicFM model package (replace with actual source)
-<PLACEHOLDER_REQUIRED_FIELD_MANUAL_FILL>
+transformers
+huggingface_hub
+einops
+librosa
+nnAudio
+easydict
+x-clip
+
+# MuQ (pip-installable package)
+git+https://github.com/tencent-ailab/MuQ.git

@@ -7,11 +7,22 @@ IAM Roles: roles/storage.objectAdmin (write embeddings), roles/storage.objectVie
 import argparse
 import io
 import json
+import os
+import re
+import tempfile
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Tuple
 
 import numpy as np
 from google.cloud import storage
+import torch
+import torchaudio
+from huggingface_hub import snapshot_download
+
+from muq import MuQ
+
+SEGMENT_SECONDS = (30, 420)
+TARGET_SAMPLE_RATE = 24000
 
 
 def read_ids(split_ids_path: str | None, labels_jsonl_path: str | None) -> list[str]:
@@ -34,8 +45,88 @@ def read_ids(split_ids_path: str | None, labels_jsonl_path: str | None) -> list[
     raise ValueError("Provide --split-ids or --labels-jsonl")
 
 
-def generate_embeddings_dummy(segment_seconds: int) -> Iterable[tuple[int, np.ndarray]]:
-    return [(0, np.zeros((1,), dtype=np.float32))]
+def download_gcs_blob(bucket: storage.Bucket, blob_name: str) -> Path:
+    blob = bucket.blob(blob_name)
+    if not blob.exists():
+        raise FileNotFoundError(f"GCS blob not found: gs://{bucket.name}/{blob_name}")
+    data = blob.download_as_bytes()
+    suffix = Path(blob_name).suffix or ".mp3"
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+    tmp.write(data)
+    tmp.flush()
+    tmp.close()
+    return Path(tmp.name)
+
+
+def parse_gcs_uri(uri: str) -> tuple[str, str]:
+    if not uri.startswith("gs://"):
+        raise ValueError(f"Not a GCS URI: {uri}")
+    bucket, prefix = uri[5:].split("/", 1)
+    return bucket, prefix
+
+
+def sanitize_model_id(model_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", model_id)
+
+
+def gcs_prefix_has_blobs(client: storage.Client, gcs_prefix: str) -> bool:
+    bucket_name, prefix = parse_gcs_uri(gcs_prefix)
+    bucket = client.bucket(bucket_name)
+    return any(bucket.list_blobs(prefix=prefix, max_results=1))
+
+
+def download_gcs_prefix(
+    client: storage.Client, gcs_prefix: str, dest_dir: Path
+) -> None:
+    bucket_name, prefix = parse_gcs_uri(gcs_prefix)
+    bucket = client.bucket(bucket_name)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for blob in bucket.list_blobs(prefix=prefix):
+        rel = blob.name[len(prefix) :].lstrip("/")
+        if not rel:
+            continue
+        out_path = dest_dir / rel
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        blob.download_to_filename(out_path)
+
+
+def upload_dir_to_gcs(
+    client: storage.Client, src_dir: Path, gcs_prefix: str
+) -> None:
+    bucket_name, prefix = parse_gcs_uri(gcs_prefix)
+    bucket = client.bucket(bucket_name)
+    prefix = prefix.rstrip("/")
+    for path in src_dir.rglob("*"):
+        if path.is_dir():
+            continue
+        rel = path.relative_to(src_dir).as_posix()
+        blob = bucket.blob(f"{prefix}/{rel}")
+        blob.upload_from_filename(path)
+
+
+def load_audio(path: Path, target_sr: int) -> torch.Tensor:
+    waveform, sr = torchaudio.load(str(path))
+    if waveform.ndim == 2 and waveform.shape[0] > 1:
+        waveform = waveform.mean(dim=0, keepdim=True)
+    if sr != target_sr:
+        waveform = torchaudio.functional.resample(waveform, sr, target_sr)
+    return waveform.squeeze(0).to(torch.float32)
+
+
+def segment_audio(
+    waveform: torch.Tensor, segment_seconds: int, sample_rate: int
+) -> Iterable[Tuple[int, torch.Tensor]]:
+    segment_len = segment_seconds * sample_rate
+    if waveform.numel() == 0:
+        return []
+    if waveform.numel() < segment_len:
+        padded = torch.zeros(segment_len, dtype=waveform.dtype)
+        padded[: waveform.numel()] = waveform
+        return [(0, padded)]
+    segments = []
+    for start in range(0, waveform.numel() - segment_len + 1, segment_len):
+        segments.append((start // sample_rate, waveform[start : start + segment_len]))
+    return segments
 
 
 def upload_npy(
@@ -53,6 +144,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Extract MuQ embeddings (30s and 420s)")
     parser.add_argument("--bucket", required=True, help="GCS bucket name")
     parser.add_argument(
+        "--audio-prefix",
+        default="audio",
+        help="GCS prefix for audio files (default: audio)",
+    )
+    parser.add_argument(
+        "--audio-extension",
+        default="mp3",
+        help="Audio file extension in GCS (default: mp3)",
+    )
+    parser.add_argument(
         "--output-root",
         default="embeddings",
         help="GCS prefix for embeddings (e.g., embeddings)",
@@ -60,28 +161,90 @@ def main() -> None:
     parser.add_argument("--split-ids", help="Path to split_ids.txt")
     parser.add_argument("--labels-jsonl", help="Path to labels.jsonl")
     parser.add_argument(
-        "--allow-dummy",
-        action="store_true",
-        help="Generate dummy embeddings (use only for wiring validation)",
+        "--muq-model",
+        default=os.environ.get("MUQ_MODEL_NAME", "OpenMuQ/MuQ-large-msd-iter"),
+        help="HuggingFace model id or local path for MuQ",
+    )
+    parser.add_argument(
+        "--muq-gcs-prefix",
+        default=os.environ.get("MUQ_GCS_PREFIX"),
+        help="GCS prefix to cache MuQ weights (default: gs://edmformer-data/metadata/muq/<model-id>)",
+    )
+    parser.add_argument(
+        "--hf-token",
+        default=os.environ.get("HF_TOKEN"),
+        help="Hugging Face token (if required)",
+    )
+    parser.add_argument(
+        "--device",
+        default=os.environ.get("MUQ_DEVICE"),
+        help="Device override (default: cuda if available else cpu)",
     )
     args = parser.parse_args()
 
     ids = read_ids(args.split_ids, args.labels_jsonl)
     client = storage.Client()
+    bucket = client.bucket(args.bucket)
+
+    device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
+    model_path = args.muq_model
+    local_dir = None
+    if model_path.startswith("gs://"):
+        local_dir = Path("/tmp/muq")
+        download_gcs_prefix(client, model_path, local_dir)
+        model_path = str(local_dir)
+    elif Path(model_path).exists():
+        model_path = str(Path(model_path).resolve())
+    else:
+        gcs_prefix = args.muq_gcs_prefix
+        if not gcs_prefix:
+            safe_name = sanitize_model_id(model_path)
+            gcs_prefix = f"gs://edmformer-data/metadata/muq/{safe_name}"
+
+        local_dir = Path("/tmp/muq")
+        if gcs_prefix_has_blobs(client, gcs_prefix):
+            download_gcs_prefix(client, gcs_prefix, local_dir)
+        else:
+            snapshot_download(
+                repo_id=model_path,
+                local_dir=local_dir,
+                local_dir_use_symlinks=False,
+                token=args.hf_token,
+            )
+            upload_dir_to_gcs(client, local_dir, gcs_prefix)
+        model_path = str(local_dir)
+
+    muq = MuQ.from_pretrained(model_path).to(device).eval()
 
     for audio_id in ids:
-        for segment_seconds in (30, 420):
-            if not args.allow_dummy:
-                raise RuntimeError(
-                    "MuQ model loading not implemented. See preprocessing/README.md"
-                )
-            for start_sec, embedding in generate_embeddings_dummy(segment_seconds):
+        blob_name = f"{args.audio_prefix.rstrip('/')}/{audio_id}.{args.audio_extension}"
+        local_path = download_gcs_blob(bucket, blob_name)
+        try:
+            waveform = load_audio(local_path, TARGET_SAMPLE_RATE)
+        finally:
+            local_path.unlink(missing_ok=True)
+
+        for segment_seconds in SEGMENT_SECONDS:
+            for start_sec, segment in segment_audio(
+                waveform, segment_seconds, TARGET_SAMPLE_RATE
+            ):
+                wavs = segment.unsqueeze(0).to(device)
+                with torch.no_grad():
+                    output = muq(wavs, output_hidden_states=False)
+                if hasattr(output, "last_hidden_state"):
+                    feats = output.last_hidden_state
+                elif isinstance(output, (tuple, list)):
+                    feats = output[0]
+                else:
+                    feats = output
+
+                embedding = feats.squeeze(0).detach().cpu().numpy().astype(np.float32)
                 subdir = f"muq_{segment_seconds}s"
-                blob_name = (
+                out_blob = (
                     f"{args.output_root.rstrip('/')}/{subdir}/{audio_id}_{start_sec}.npy"
                 )
-                upload_npy(client, args.bucket, blob_name, embedding)
-                print(f"Wrote gs://{args.bucket}/{blob_name}")
+                upload_npy(client, args.bucket, out_blob, embedding)
+                print(f"Wrote gs://{args.bucket}/{out_blob}")
 
 
 if __name__ == "__main__":
