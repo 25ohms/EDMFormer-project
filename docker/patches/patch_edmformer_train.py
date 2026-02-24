@@ -11,7 +11,7 @@ def main() -> None:
 
     import re
 
-    pattern = r"(\\n\\s*params = model\\.parameters\\(\\)\\n)(\\s*if accelerator\\.is_main_process:)"
+    pattern = r"(\n\s*params = model\.parameters\(\)\n)(\s*if accelerator\.is_main_process:)"
     match = re.search(pattern, text)
     if not match:
         raise SystemExit(
