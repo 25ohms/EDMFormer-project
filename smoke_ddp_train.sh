@@ -63,9 +63,19 @@ Missing required environment variables.
 Please set: REGION, GCP_PROJECT, ARTIFACT_REPO
 Defaults can be loaded from config/gcp_env.yaml (or set GCP_ENV_CONFIG).
 Optional: IMAGE_NAME, TAG, IMAGE_URI, CONFIG_PATH, NPROC, MAX_STEPS
+Optional (task entrypoint): LABEL_PATH_GCS, SPLIT_IDS_PATH_GCS, EVAL_SPLIT_IDS_PATH_GCS,
+  INPUT_EMBEDDING_DIR_GCS, EMBEDDING_SUBDIRS
 EOF
   exit 1
 fi
+
+# Map legacy env names from config/gcp_env.yaml to task.py expectations.
+LABEL_PATH_GCS="${LABEL_PATH_GCS:-${LABELS_JSONL_GCS:-}}"
+SPLIT_IDS_PATH_GCS="${SPLIT_IDS_PATH_GCS:-${SPLIT_IDS_GCS:-}}"
+EVAL_SPLIT_IDS_PATH_GCS="${EVAL_SPLIT_IDS_PATH_GCS:-${EVAL_SPLIT_IDS_GCS:-}}"
+INPUT_EMBEDDING_DIR_GCS="${INPUT_EMBEDDING_DIR_GCS:-${EMBEDDINGS_GCS_DIR:-}}"
+EMBEDDING_SUBDIRS="${EMBEDDING_SUBDIRS:-}"
+PREFETCH_EMBEDDINGS="${PREFETCH_EMBEDDINGS:-}"
 
 IMAGE_NAME="${IMAGE_NAME:-edmformer-train}"
 TAG="${TAG:-}"
@@ -106,14 +116,57 @@ if [[ "${USE_LATEST}" == "1" && "${IMAGE_URI}" != "${IMAGE_REPO}:latest" ]]; the
   fi
 fi
 CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}"
-NPROC="${NPROC:-2}"
+NPROC="${NPROC:-}"
 MAX_STEPS="${MAX_STEPS:-1}"
 GPU_DEVICES="${GPU_DEVICES:-}"
+USE_TASK_ENTRYPOINT="${USE_TASK_ENTRYPOINT:-1}"
+
+HOST_GPU_COUNT=0
+if command -v nvidia-smi >/dev/null 2>&1; then
+  HOST_GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
+fi
+
+GPU_LIST=()
+if [[ -n "${GPU_DEVICES}" ]]; then
+  IFS=',' read -r -a GPU_LIST <<< "${GPU_DEVICES}"
+  GPU_LIST=("${GPU_LIST[@]/#/}" )
+  GPU_LIST=("${GPU_LIST[@]/%/}" )
+  GPU_COUNT=${#GPU_LIST[@]}
+  if [[ "${HOST_GPU_COUNT}" -gt 0 && "${GPU_COUNT}" -gt "${HOST_GPU_COUNT}" ]]; then
+    echo "Warning: GPU_DEVICES (${GPU_DEVICES}) exceeds host GPU count (${HOST_GPU_COUNT}); trimming." >&2
+    GPU_LIST=("${GPU_LIST[@]:0:${HOST_GPU_COUNT}}")
+    GPU_DEVICES="$(IFS=','; echo "${GPU_LIST[*]}")"
+    GPU_COUNT=${#GPU_LIST[@]}
+  fi
+else
+  GPU_COUNT=${HOST_GPU_COUNT}
+fi
+
+if [[ -z "${NPROC}" ]]; then
+  if [[ "${GPU_COUNT}" -gt 0 ]]; then
+    NPROC="${GPU_COUNT}"
+  else
+    NPROC="1"
+  fi
+elif [[ "${GPU_COUNT}" -gt 0 && "${NPROC}" -gt "${GPU_COUNT}" ]]; then
+  echo "Warning: NPROC (${NPROC}) exceeds visible GPU count (${GPU_COUNT}); reducing." >&2
+  NPROC="${GPU_COUNT}"
+fi
 
 echo "Using image: ${RUN_IMAGE_URI}"
 echo "Config: ${CONFIG_PATH}"
 echo "DDP processes: ${NPROC}"
 echo "Max steps: ${MAX_STEPS}"
+if [[ "${USE_TASK_ENTRYPOINT}" == "1" ]]; then
+  if [[ -z "${LABEL_PATH_GCS}" || -z "${SPLIT_IDS_PATH_GCS}" || -z "${INPUT_EMBEDDING_DIR_GCS}" ]]; then
+    cat <<'EOF' >&2
+Missing required GCS paths for task entrypoint.
+Please set: LABEL_PATH_GCS, SPLIT_IDS_PATH_GCS, INPUT_EMBEDDING_DIR_GCS
+Optional: EVAL_SPLIT_IDS_PATH_GCS, EMBEDDING_SUBDIRS
+EOF
+    exit 1
+  fi
+fi
 
 if [[ "${PULL_IMAGE}" == "1" ]]; then
   docker pull "${RUN_IMAGE_URI}"
@@ -141,21 +194,43 @@ if [[ -n "${GPU_DEVICES}" ]]; then
   NVIDIA_DEVICES=(-e "NVIDIA_VISIBLE_DEVICES=${GPU_DEVICES}" -e "CUDA_VISIBLE_DEVICES=${GPU_DEVICES}")
 fi
 
-docker run --rm --gpus all \
+DOCKER_GPU_ARGS=(--gpus all)
+if [[ -n "${GPU_DEVICES}" ]]; then
+  DOCKER_GPU_ARGS=(--gpus "device=${GPU_DEVICES}")
+fi
+
+docker run --rm "${DOCKER_GPU_ARGS[@]}" \
   -e WANDB_MODE=disabled \
   -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
   -e PYTHONPATH=/app/src:/app/third_party/EDMFormer/src/SongFormer:/app/third_party/EDMFormer/src \
+  -e LABEL_PATH_GCS="${LABEL_PATH_GCS}" \
+  -e SPLIT_IDS_PATH_GCS="${SPLIT_IDS_PATH_GCS}" \
+  -e EVAL_SPLIT_IDS_PATH_GCS="${EVAL_SPLIT_IDS_PATH_GCS}" \
+  -e INPUT_EMBEDDING_DIR_GCS="${INPUT_EMBEDDING_DIR_GCS}" \
+  -e EMBEDDING_SUBDIRS="${EMBEDDING_SUBDIRS}" \
+  -e PREFETCH_EMBEDDINGS="${PREFETCH_EMBEDDINGS}" \
   -w /app/third_party/EDMFormer/src/SongFormer \
   "${GCLOUD_MOUNT[@]}" \
   "${NVIDIA_DEVICES[@]}" \
   "${RUN_IMAGE_URI}" \
-  python -m torch.distributed.run --standalone --nproc_per_node "${NPROC}" \
-    /app/third_party/EDMFormer/src/SongFormer/train/train.py \
-    --config "${CONFIG_PATH}" \
-    --init_seed 42 \
-    --checkpoint_dir /tmp/edmformer-smoke \
-    --max_steps "${MAX_STEPS}" \
-    --max_epochs 1 \
-    --log_interval 1
+  bash -c "\
+    if [[ '${USE_TASK_ENTRYPOINT}' == '1' ]]; then \
+      python /app/src/task.py \
+        --config-path '${CONFIG_PATH}' \
+        --num-gpus '${NPROC}' \
+        --checkpoint-dir /tmp/edmformer-smoke \
+        --init-seed 42 \
+        --train-args --max_steps '${MAX_STEPS}' --max_epochs 1 --log_interval 1; \
+    else \
+      python -m torch.distributed.run --standalone --nproc_per_node '${NPROC}' \
+        /app/third_party/EDMFormer/src/SongFormer/train/train.py \
+        --config '${CONFIG_PATH}' \
+        --init_seed 42 \
+        --checkpoint_dir /tmp/edmformer-smoke \
+        --max_steps '${MAX_STEPS}' \
+        --max_epochs 1 \
+        --log_interval 1; \
+    fi\
+  "
 
 echo "DDP smoke test completed."

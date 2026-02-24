@@ -72,8 +72,11 @@ JOB_CONFIG="${JOB_CONFIG:-config/vertex_gpu_job.yaml}"
 DOCKERFILE="${DOCKERFILE:-docker/training.Dockerfile}"
 IMAGE_NAME="${IMAGE_NAME:-edmformer-train}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
-IMAGE_URI="${IMAGE_URI:-${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}:${TAG}}"
+IMAGE_REPO="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}"
+IMAGE_URI="${IMAGE_URI:-${IMAGE_REPO}:${TAG}}"
 JOB_NAME="${JOB_NAME:-edmformer-gpu-$(date +%Y%m%d-%H%M)}"
+PUSH_LATEST="${PUSH_LATEST:-1}"
+USE_LATEST="${USE_LATEST:-1}"
 
 if [[ ! -f "${JOB_CONFIG}" ]]; then
   echo "Job config not found: ${JOB_CONFIG}" >&2
@@ -92,13 +95,28 @@ docker build --no-cache -f "${DOCKERFILE}" -t "${IMAGE_URI}" .
 echo "Pushing image..."
 docker push "${IMAGE_URI}"
 
+if [[ "${USE_LATEST}" == "1" ]]; then
+  PUSH_LATEST="1"
+fi
+
+if [[ "${PUSH_LATEST}" == "1" ]]; then
+  echo "Tagging and pushing latest..."
+  docker tag "${IMAGE_URI}" "${IMAGE_REPO}:latest"
+  docker push "${IMAGE_REPO}:latest"
+fi
+
+JOB_IMAGE_URI="${IMAGE_URI}"
+if [[ "${USE_LATEST}" == "1" ]]; then
+  JOB_IMAGE_URI="${IMAGE_REPO}:latest"
+fi
+
 echo "Updating imageUri in ${JOB_CONFIG}..."
 if sed --version >/dev/null 2>&1; then
   # GNU sed
-  sed -i -E "s|^([[:space:]]*imageUri:).*|\\1 ${IMAGE_URI}|" "${JOB_CONFIG}"
+  sed -i -E "s|^([[:space:]]*imageUri:).*|\\1 ${JOB_IMAGE_URI}|" "${JOB_CONFIG}"
 else
   # BSD sed (macOS)
-  sed -i '' -E "s|^([[:space:]]*imageUri:).*|\\1 ${IMAGE_URI}|" "${JOB_CONFIG}"
+  sed -i '' -E "s|^([[:space:]]*imageUri:).*|\\1 ${JOB_IMAGE_URI}|" "${JOB_CONFIG}"
 fi
 
 echo "Submitting job: ${JOB_NAME}"

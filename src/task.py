@@ -113,6 +113,11 @@ def main() -> None:
         help="Comma-separated subdir names used when input-embedding-dir is a root",
     )
     parser.add_argument(
+        "--prefetch-embeddings",
+        default=os.environ.get("PREFETCH_EMBEDDINGS", "0"),
+        help="If true, download embedding prefixes from GCS to local-data-dir before training.",
+    )
+    parser.add_argument(
         "--dataset-type",
         default=os.environ.get("DATASET_TYPE", "EDMFormer"),
     )
@@ -183,6 +188,26 @@ def main() -> None:
         x.strip() for x in embedding_subdirs_raw.split(",") if x.strip()
     ]
     embedding_inputs = resolve_embedding_dirs(args.input_embedding_dir, embedding_subdirs)
+
+    prefetch_embeddings = _is_truthy(args.prefetch_embeddings)
+    if prefetch_embeddings:
+        local_embeddings_root = local_root / "embeddings"
+        local_embedding_inputs = []
+        for embd in embedding_inputs:
+            if not embd.startswith("gs://"):
+                local_embedding_inputs.append(embd)
+                continue
+            _, prefix = parse_gcs_uri(embd)
+            subdir_name = Path(prefix.rstrip("/")).name or "embeddings"
+            local_dir = local_embeddings_root / subdir_name
+            if local_dir.exists() and any(local_dir.rglob("*.npy")):
+                print(f"Using cached embeddings for {embd} at {local_dir}")
+            else:
+                print(f"Prefetching embeddings from {embd} to {local_dir} ...")
+                download_gcs_prefix(client, embd, local_dir)
+            local_embedding_inputs.append(str(local_dir))
+        embedding_inputs = local_embedding_inputs
+
     local_input_embedding_dir = " ".join(embedding_inputs)
 
     config_path = Path(args.config_path).resolve()
