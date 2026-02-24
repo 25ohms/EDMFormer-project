@@ -136,17 +136,18 @@ if [[ "${MOUNT_GCLOUD:-1}" == "1" && -d "${HOME}/.config/gcloud" ]]; then
   GCLOUD_MOUNT=(-v "${HOME}/.config/gcloud:/root/.config/gcloud:ro")
 fi
 
-GPU_FLAG="all"
+NVIDIA_DEVICES=()
 if [[ -n "${GPU_DEVICES}" ]]; then
-  GPU_FLAG="device=${GPU_DEVICES}"
+  NVIDIA_DEVICES=(-e "NVIDIA_VISIBLE_DEVICES=${GPU_DEVICES}" -e "CUDA_VISIBLE_DEVICES=${GPU_DEVICES}")
 fi
 
-docker run --rm --gpus "${GPU_FLAG}" \
+docker run --rm --gpus all \
   -e WANDB_MODE=disabled \
   -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
   -e PYTHONPATH=/app/src:/app/third_party/EDMFormer/src/SongFormer:/app/third_party/EDMFormer/src \
   -w /app/third_party/EDMFormer/src/SongFormer \
   "${GCLOUD_MOUNT[@]}" \
+  "${NVIDIA_DEVICES[@]}" \
   "${RUN_IMAGE_URI}" \
   python -m torch.distributed.run --standalone --nproc_per_node "${NPROC}" \
     /app/third_party/EDMFormer/src/SongFormer/train/train.py \
