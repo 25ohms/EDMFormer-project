@@ -68,8 +68,28 @@ EOF
 fi
 
 IMAGE_NAME="${IMAGE_NAME:-edmformer-train}"
-TAG="${TAG:-latest}"
-IMAGE_URI="${IMAGE_URI:-${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}:${TAG}}"
+TAG="${TAG:-}"
+IMAGE_REPO="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}"
+
+if [[ -z "${IMAGE_URI:-}" && -z "${TAG}" ]]; then
+  if command -v gcloud >/dev/null 2>&1; then
+    latest_tags="$(gcloud artifacts docker images list "${IMAGE_REPO}" \
+      --project="${GCP_PROJECT}" \
+      --include-tags \
+      --sort-by=~UPDATE_TIME \
+      --limit=1 \
+      --format='value(TAGS)' 2>/dev/null || true)"
+    if [[ -n "${latest_tags}" ]]; then
+      TAG="${latest_tags%%,*}"
+    fi
+  fi
+fi
+
+if [[ -z "${IMAGE_URI:-}" && -z "${TAG}" ]]; then
+  TAG="latest"
+fi
+
+IMAGE_URI="${IMAGE_URI:-${IMAGE_REPO}:${TAG}}"
 CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}"
 NPROC="${NPROC:-2}"
 MAX_STEPS="${MAX_STEPS:-1}"
