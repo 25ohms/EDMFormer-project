@@ -72,6 +72,57 @@ def main() -> None:
         )
         text = "\n".join(lines) + "\n"
 
+    # Patch 3: avoid Balancer autograd.grad with DDP (causes unused-parameter errors).
+    if "use_balancer = accelerator.num_processes == 1" not in text:
+        lines = text.splitlines()
+        bal_idx = None
+        for i, line in enumerate(lines):
+            if "balancer = Balancer(" in line:
+                bal_idx = i
+                break
+        if bal_idx is None:
+            raise SystemExit(
+                "Patch failed: expected 'balancer = Balancer(' block not found in train.py. "
+                "The upstream file may have changed."
+            )
+        close_idx = None
+        for j in range(bal_idx + 1, len(lines)):
+            if lines[j].strip() == ")":
+                close_idx = j
+                break
+        if close_idx is None:
+            raise SystemExit(
+                "Patch failed: could not find end of Balancer(...) block in train.py. "
+                "The upstream file may have changed."
+            )
+        indent = lines[bal_idx].split("balancer =")[0]
+        lines.insert(close_idx + 1, f"{indent}use_balancer = accelerator.num_processes == 1")
+        text = "\n".join(lines) + "\n"
+
+    # Replace loss_sum computation to bypass Balancer on multi-GPU.
+    if "if use_balancer:" not in text:
+        pattern = (
+            r"(?P<indent>\\s*)loss_sum = balancer\\.cal_mix_loss\\(\\n"
+            r"(?P<body>(?:.|\\n)*?)\\n\\s*\\)"
+        )
+        match = re.search(pattern, text)
+        if not match:
+            raise SystemExit(
+                "Patch failed: expected 'loss_sum = balancer.cal_mix_loss(' block not found in train.py. "
+                "The upstream file may have changed."
+            )
+        indent = match.group("indent")
+        body = match.group("body")
+        replacement = (
+            f"{indent}if use_balancer:\\n"
+            f"{indent}    loss_sum = balancer.cal_mix_loss(\\n"
+            f"{body}\\n"
+            f"{indent}    )\\n"
+            f"{indent}else:\\n"
+            f"{indent}    loss_sum = losses[\"loss_section\"] + losses[\"loss_function\"]"
+        )
+        text = re.sub(pattern, replacement, text, count=1)
+
     if "params = model.parameters()" not in text:
         raise SystemExit(
             "Patch failed: expected 'params = model.parameters()' line not found after patching. "
