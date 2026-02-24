@@ -247,7 +247,12 @@ def main() -> None:
     if local_checkpoint_dir is not None:
         train_args = ensure_arg(train_args, "--checkpoint_dir", str(local_checkpoint_dir))
 
+    repo_root = Path(__file__).resolve().parents[1]
     train_script = Path(args.train_script).resolve()
+    if not train_script.exists() and not Path(args.train_script).is_absolute():
+        candidate = (repo_root / args.train_script).resolve()
+        if candidate.exists():
+            train_script = candidate
     if not train_script.exists():
         raise SystemExit(f"Train script not found: {train_script}")
     if train_backend == "TPU" and "tpu_train.py" not in train_script.as_posix():
@@ -275,8 +280,7 @@ def main() -> None:
                 )
         except Exception:
             pass
-    workdir = Path("third_party/EDMFormer/src/SongFormer").resolve()
-    repo_root = Path(__file__).resolve().parents[1]
+    workdir = (repo_root / "third_party/EDMFormer/src/SongFormer").resolve()
     src_root = repo_root / "src"
 
     env = os.environ.copy()

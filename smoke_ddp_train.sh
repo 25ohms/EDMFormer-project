@@ -120,6 +120,10 @@ NPROC="${NPROC:-}"
 MAX_STEPS="${MAX_STEPS:-1}"
 GPU_DEVICES="${GPU_DEVICES:-}"
 USE_TASK_ENTRYPOINT="${USE_TASK_ENTRYPOINT:-1}"
+DOCKER_WORKDIR="/app/third_party/EDMFormer/src/SongFormer"
+if [[ "${USE_TASK_ENTRYPOINT}" == "1" ]]; then
+  DOCKER_WORKDIR="/app"
+fi
 
 HOST_GPU_COUNT=0
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -209,7 +213,7 @@ docker run --rm "${DOCKER_GPU_ARGS[@]}" \
   -e INPUT_EMBEDDING_DIR_GCS="${INPUT_EMBEDDING_DIR_GCS}" \
   -e EMBEDDING_SUBDIRS="${EMBEDDING_SUBDIRS}" \
   -e PREFETCH_EMBEDDINGS="${PREFETCH_EMBEDDINGS}" \
-  -w /app/third_party/EDMFormer/src/SongFormer \
+  -w "${DOCKER_WORKDIR}" \
   "${GCLOUD_MOUNT[@]}" \
   "${NVIDIA_DEVICES[@]}" \
   "${RUN_IMAGE_URI}" \
