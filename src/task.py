@@ -13,6 +13,7 @@ from pathlib import Path
 from google.cloud import storage
 
 from config_generator import update_config
+import yaml
 
 DEFAULT_EMBEDDING_SUBDIRS = "musicfm_30s,muq_30s,musicfm_420s,muq_420s"
 
@@ -79,6 +80,43 @@ def _is_truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _apply_dataloader_overrides(config_path: Path) -> None:
+    overrides: dict[str, str] = {}
+    for key in (
+        "DATALOADER_NUM_WORKERS",
+        "DATALOADER_PREFETCH_FACTOR",
+        "DATALOADER_PERSISTENT_WORKERS",
+        "DATALOADER_PIN_MEMORY",
+    ):
+        value = os.environ.get(key)
+        if value is not None and value != "":
+            overrides[key] = value
+
+    if not overrides:
+        return
+
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    for section in ("train_dataloader", "eval_dataloader"):
+        if section not in data or data[section] is None:
+            data[section] = {}
+        if "DATALOADER_NUM_WORKERS" in overrides:
+            data[section]["num_workers"] = int(overrides["DATALOADER_NUM_WORKERS"])
+        if "DATALOADER_PREFETCH_FACTOR" in overrides:
+            data[section]["prefetch_factor"] = int(
+                overrides["DATALOADER_PREFETCH_FACTOR"]
+            )
+        if "DATALOADER_PERSISTENT_WORKERS" in overrides:
+            data[section]["persistent_workers"] = _is_truthy(
+                overrides["DATALOADER_PERSISTENT_WORKERS"]
+            )
+        if "DATALOADER_PIN_MEMORY" in overrides:
+            data[section]["pin_memory"] = _is_truthy(
+                overrides["DATALOADER_PIN_MEMORY"]
+            )
+
+    config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 def main() -> None:
@@ -220,6 +258,7 @@ def main() -> None:
         input_embedding_dir=local_input_embedding_dir,
         dataset_type=args.dataset_type,
     )
+    _apply_dataloader_overrides(config_path)
 
     train_args = list(args.train_args)
     train_args = ensure_arg(train_args, "--config", str(config_path))
