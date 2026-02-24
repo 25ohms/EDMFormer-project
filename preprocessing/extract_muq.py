@@ -352,6 +352,12 @@ def main() -> None:
             waveform = load_audio(local_path, TARGET_SAMPLE_RATE)
         finally:
             local_path.unlink(missing_ok=True)
+        if waveform.numel() < WRAP_SIZE * TARGET_SAMPLE_RATE:
+            padded = torch.zeros(
+                WRAP_SIZE * TARGET_SAMPLE_RATE, dtype=waveform.dtype
+            )
+            padded[: waveform.numel()] = waveform
+            waveform = padded
 
         # 30s embeddings wrapped into 420s windows
         wrap_subdir = "muq_30s"
