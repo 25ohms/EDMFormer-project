@@ -129,17 +129,19 @@ class Dataset(Dataset):
                     self.get_ids_from_dir(x)
                 )
 
-            split_ids = []
-            if _is_gcs_path(split_ids_path):
-                split_text = _read_gcs_text(split_ids_path)
-                split_lines = split_text.splitlines()
-            else:
-                with open(split_ids_path) as f:
-                    split_lines = f.readlines()
-            for line in split_lines:
-                if not line.strip():
-                    continue
-                split_ids.append(line.strip())
+            split_ids = dataset_abstract_item.get("split_ids")
+            if split_ids is None:
+                split_ids = []
+                if _is_gcs_path(split_ids_path):
+                    split_text = _read_gcs_text(split_ids_path)
+                    split_lines = split_text.splitlines()
+                else:
+                    with open(split_ids_path) as f:
+                        split_lines = f.readlines()
+                for line in split_lines:
+                    if not line.strip():
+                        continue
+                    split_ids.append(line.strip())
             split_ids = set(split_ids)
 
             valid_data_ids = [

@@ -180,6 +180,9 @@ def main() -> None:
     train_args = list(args.train_args)
     train_args = ensure_arg(train_args, "--config", str(config_path))
     train_args = ensure_arg(train_args, "--init_seed", str(args.init_seed))
+    test_ids_path = os.environ.get("TEST_IDS_PATH_GCS")
+    if test_ids_path:
+        train_args = ensure_arg(train_args, "--test-ids-path", test_ids_path)
 
     local_checkpoint_dir = None
     checkpoint_gcs = None
