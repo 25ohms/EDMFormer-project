@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-for cmd in docker gcloud; do
+for cmd in docker; do
   if ! command -v "${cmd}" >/dev/null 2>&1; then
     echo "Missing required command: ${cmd}" >&2
     exit 1
@@ -67,7 +67,6 @@ EOF
   exit 1
 fi
 
-JOB_NAME="${JOB_NAME:-edmformer-preprocess-$(date +%Y%m%d-%H%M)}"
 DOCKERFILE="${DOCKERFILE:-docker/preprocessing.Dockerfile}"
 IMAGE_NAME="${IMAGE_NAME:-edmformer-preprocess}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
@@ -111,26 +110,20 @@ echo "Output root: ${OUTPUT_ROOT}"
 echo "Building preprocessing image..."
 docker build --no-cache -f "${DOCKERFILE}" -t "${IMAGE_URI}" .
 
-echo "Pushing preprocessing image..."
-docker push "${IMAGE_URI}"
-
 CMD="python preprocessing/extract_muq.py --bucket ${BUCKET_NAME} ${ID_ARGS} --output-root ${OUTPUT_ROOT} ${WIPE_FLAG} && \
 python preprocessing/extract_musicfm.py --bucket ${BUCKET_NAME} ${ID_ARGS} --output-root ${OUTPUT_ROOT} ${WIPE_FLAG}"
 
-WORKER_SPEC="machine-type=${PREPROCESS_MACHINE_TYPE:-g2-standard-8},accelerator-type=${PREPROCESS_ACCELERATOR_TYPE:-NVIDIA_L4},accelerator-count=${PREPROCESS_ACCELERATOR_COUNT:-1},replica-count=1,container-image-uri=${IMAGE_URI},command=/bin/bash,command=-c,args=${CMD}"
-
+DOCKER_ENV_ARGS=()
 for env_key in HF_TOKEN MUQ_MODEL_NAME MUQ_GCS_PREFIX MUSICFM_STAT_PATH MUSICFM_MODEL_PATH MUSICFM_VARIANT MUSICFM_DEVICE MUQ_DEVICE; do
   if [[ -n "${!env_key:-}" ]]; then
-    WORKER_SPEC="${WORKER_SPEC},env=${env_key}=${!env_key}"
+    DOCKER_ENV_ARGS+=("-e" "${env_key}=${!env_key}")
   fi
 done
 
-echo "Submitting preprocessing job: ${JOB_NAME}"
-gcloud ai custom-jobs create \
-  --region="${REGION}" \
-  --project="${GCP_PROJECT}" \
-  --display-name="${JOB_NAME}" \
-  --worker-pool-spec="${WORKER_SPEC}"
+echo "Running preprocessing locally on this VM..."
+docker run --rm --gpus all \
+  "${DOCKER_ENV_ARGS[@]}" \
+  "${IMAGE_URI}" \
+  /bin/bash -c "${CMD}"
 
-echo "Job submitted. Stream logs with:"
-echo "  gcloud ai custom-jobs stream-logs --region=${REGION} --project=${GCP_PROJECT} <JOB_ID>"
+echo "Preprocessing completed."
