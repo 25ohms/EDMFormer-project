@@ -1,11 +1,10 @@
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04
+FROM pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_NO_CACHE_DIR=1
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 \
-    python3-pip \
-    python3-dev \
     git \
     ffmpeg \
     libsndfile1 \
@@ -27,11 +26,30 @@ WORKDIR /app
 COPY preprocessing/ /app/preprocessing/
 COPY preprocessing/requirements_pre.txt /app/requirements_pre.txt
 
-RUN python3 -m pip install --upgrade pip \
-    && python3 -m pip install -r /app/requirements_pre.txt
+RUN python - <<'PY'
+import importlib.metadata as md
+from pathlib import Path
+
+lines = []
+try:
+    import torch
+    lines.append(f"torch=={torch.__version__}")
+except Exception:
+    pass
+for pkg in ("torchaudio", "torchvision"):
+    try:
+        lines.append(f"{pkg}=={md.version(pkg)}")
+    except Exception:
+        pass
+Path("/app/torch_constraints.txt").write_text("\n".join(lines))
+PY
+
+RUN python -m pip install --upgrade pip \
+    && grep -v -i -E '^[[:space:]]*(torch|torchaudio|torchvision)([=<>!~].*)?$' /app/requirements_pre.txt > /app/requirements_pre_filtered.txt \
+    && python -m pip install -r /app/requirements_pre_filtered.txt -c /app/torch_constraints.txt
 
 # torchcodec for audio/video decode support (aligns with installed torch)
-RUN python3 -m pip install torchcodec
+RUN python -m pip install torchcodec
 
 # MusicFM is not pip-packaged; clone source and add to PYTHONPATH
 ARG MUSICFM_REPO=https://github.com/minzwon/musicfm.git
@@ -42,4 +60,4 @@ RUN git clone ${MUSICFM_REPO} /app/musicfm \
 
 ENV PYTHONPATH=/app
 
-CMD ["python3", "preprocessing/extract_muq.py", "--help"]
+CMD ["python", "preprocessing/extract_muq.py", "--help"]
