@@ -124,6 +124,8 @@ DOCKER_WORKDIR="/app/third_party/EDMFormer/src/SongFormer"
 if [[ "${USE_TASK_ENTRYPOINT}" == "1" ]]; then
   DOCKER_WORKDIR="/app"
 fi
+SHM_SIZE="${SHM_SIZE:-2g}"
+USE_HOST_IPC="${USE_HOST_IPC:-0}"
 
 HOST_GPU_COUNT=0
 if command -v nvidia-smi >/dev/null 2>&1; then
@@ -204,6 +206,8 @@ if [[ -n "${GPU_DEVICES}" ]]; then
 fi
 
 docker run --rm "${DOCKER_GPU_ARGS[@]}" \
+  ${USE_HOST_IPC:+$([[ "${USE_HOST_IPC}" == "1" ]] && echo "--ipc=host")} \
+  --shm-size="${SHM_SIZE}" \
   -e WANDB_MODE=disabled \
   -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
   -e PYTHONPATH=/app/src:/app/third_party/EDMFormer/src/SongFormer:/app/third_party/EDMFormer/src \
