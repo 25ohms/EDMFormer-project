@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}"
+
+for cmd in docker gcloud; do
+  if ! command -v "${cmd}" >/dev/null 2>&1; then
+    echo "Missing required command: ${cmd}" >&2
+    exit 1
+  fi
+done
+
+PYTHON_BIN="python3"
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+fi
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "Missing required command: python3 (or python)" >&2
+  exit 1
+fi
+
+GCP_ENV_CONFIG="${GCP_ENV_CONFIG:-config/gcp_env.yaml}"
+if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" ]]; then
+  if [[ -f "${GCP_ENV_CONFIG}" ]]; then
+    eval "$("${PYTHON_BIN}" - <<'PY'
+import os
+import re
+from pathlib import Path
+
+cfg = Path(os.environ.get("GCP_ENV_CONFIG", "config/gcp_env.yaml"))
+if not cfg.exists():
+    raise SystemExit(0)
+
+def sh_escape(value: str) -> str:
+    return value.replace("\\\\", "\\\\\\\\").replace('"', '\\"')
+
+data = {}
+for line in cfg.read_text().splitlines():
+    line = line.strip()
+    if not line or line.startswith("#") or ":" not in line:
+        continue
+    key, val = line.split(":", 1)
+    key = key.strip()
+    val = val.strip()
+    if (val.startswith('"') and val.endswith('"')) or (val.startswith("'") and val.endswith("'")):
+        val = val[1:-1]
+    data[key] = val
+
+for key in ("REGION", "GCP_PROJECT", "ARTIFACT_REPO"):
+    if os.environ.get(key):
+        continue
+    value = data.get(key)
+    if value:
+        print(f'export {key}="{sh_escape(value)}"')
+PY
+    )"
+  fi
+fi
+
+if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" ]]; then
+  cat <<'EOF'
+Missing required environment variables.
+Please set: REGION, GCP_PROJECT, ARTIFACT_REPO
+Defaults can be loaded from config/gcp_env.yaml (or set GCP_ENV_CONFIG).
+Optional: IMAGE_NAME, TAG, IMAGE_URI, JOB_CONFIG, DOCKERFILE, JOB_NAME
+EOF
+  exit 1
+fi
+
+JOB_CONFIG="${JOB_CONFIG:-config/vertex_gpu_job.yaml}"
+DOCKERFILE="${DOCKERFILE:-docker/training.Dockerfile}"
+IMAGE_NAME="${IMAGE_NAME:-edmformer-train}"
+TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
+IMAGE_URI="${IMAGE_URI:-${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}:${TAG}}"
+JOB_NAME="${JOB_NAME:-edmformer-gpu-$(date +%Y%m%d-%H%M)}"
+
+if [[ ! -f "${JOB_CONFIG}" ]]; then
+  echo "Job config not found: ${JOB_CONFIG}" >&2
+  exit 1
+fi
+if [[ ! -f "${DOCKERFILE}" ]]; then
+  echo "Dockerfile not found: ${DOCKERFILE}" >&2
+  exit 1
+fi
+
+echo "Using image: ${IMAGE_URI}"
+echo "Using job config: ${JOB_CONFIG}"
+echo "Building image..."
+docker build --no-cache -f "${DOCKERFILE}" -t "${IMAGE_URI}" .
+
+echo "Pushing image..."
+docker push "${IMAGE_URI}"
+
+echo "Updating imageUri in ${JOB_CONFIG}..."
+IMAGE_URI="${IMAGE_URI}" JOB_CONFIG="${JOB_CONFIG}" "${PYTHON_BIN}" - <<'PY'
+import os
+import re
+from pathlib import Path
+
+job_config = Path(os.environ["JOB_CONFIG"])
+image_uri = os.environ["IMAGE_URI"]
+text = job_config.read_text()
+new_text, count = re.subn(r'(^\s*imageUri:\s*).*$',
+                          r'\1' + image_uri,
+                          text,
+                          flags=re.MULTILINE)
+if count == 0:
+    raise SystemExit(f"No imageUri found in {job_config}")
+job_config.write_text(new_text)
+PY
+
+echo "Submitting job: ${JOB_NAME}"
+gcloud ai custom-jobs create \
+  --region="${REGION}" \
+  --project="${GCP_PROJECT}" \
+  --display-name="${JOB_NAME}" \
+  --config="${JOB_CONFIG}"
+
+echo "Job submitted. Stream logs with:"
+echo "  gcloud ai custom-jobs stream-logs --region=${REGION} --project=${GCP_PROJECT} <JOB_ID>"

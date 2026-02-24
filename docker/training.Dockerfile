@@ -18,4 +18,7 @@ RUN python -m pip install --upgrade pip \
 
 COPY . /app
 
+# Overlay a small patch to avoid multi-GPU crash without modifying the submodule.
+RUN python /app/docker/patches/patch_edmformer_train.py
+
 CMD ["python", "src/task.py", "--help"]
