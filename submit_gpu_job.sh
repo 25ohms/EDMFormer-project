@@ -93,22 +93,13 @@ echo "Pushing image..."
 docker push "${IMAGE_URI}"
 
 echo "Updating imageUri in ${JOB_CONFIG}..."
-IMAGE_URI="${IMAGE_URI}" JOB_CONFIG="${JOB_CONFIG}" "${PYTHON_BIN}" - <<'PY'
-import os
-import re
-from pathlib import Path
-
-job_config = Path(os.environ["JOB_CONFIG"])
-image_uri = os.environ["IMAGE_URI"]
-text = job_config.read_text()
-new_text, count = re.subn(r'(^\s*imageUri:\s*).*$',
-                          r'\1' + image_uri,
-                          text,
-                          flags=re.MULTILINE)
-if count == 0:
-    raise SystemExit(f"No imageUri found in {job_config}")
-job_config.write_text(new_text)
-PY
+if sed --version >/dev/null 2>&1; then
+  # GNU sed
+  sed -i -E "s|^([[:space:]]*imageUri:).*|\\1 ${IMAGE_URI}|" "${JOB_CONFIG}"
+else
+  # BSD sed (macOS)
+  sed -i '' -E "s|^([[:space:]]*imageUri:).*|\\1 ${IMAGE_URI}|" "${JOB_CONFIG}"
+fi
 
 echo "Submitting job: ${JOB_NAME}"
 gcloud ai custom-jobs create \

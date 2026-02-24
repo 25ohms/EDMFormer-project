@@ -9,19 +9,19 @@ def main() -> None:
         print("Patch already applied.")
         return
 
-    needle = "    params = model.parameters()\\n\\n    if accelerator.is_main_process:"
-    replacement = (
-        "    params = model.parameters()\\n\\n"
-        "    model_ema = None\\n"
-        "    if accelerator.is_main_process:"
-    )
-    if needle not in text:
+    import re
+
+    pattern = r"(\\n\\s*params = model\\.parameters\\(\\)\\n)(\\s*if accelerator\\.is_main_process:)"
+    match = re.search(pattern, text)
+    if not match:
         raise SystemExit(
-            "Patch failed: expected block not found in train.py. "
+            "Patch failed: expected 'params = model.parameters()' block not found in train.py. "
             "The upstream file may have changed."
         )
 
-    path.write_text(text.replace(needle, replacement))
+    replacement = match.group(1) + "    model_ema = None\\n" + match.group(2)
+    new_text = re.sub(pattern, replacement, text, count=1)
+    path.write_text(new_text)
     print("Patch applied.")
 
 
