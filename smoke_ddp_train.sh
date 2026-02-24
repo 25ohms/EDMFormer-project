@@ -108,6 +108,7 @@ fi
 CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}"
 NPROC="${NPROC:-2}"
 MAX_STEPS="${MAX_STEPS:-1}"
+GPU_DEVICES="${GPU_DEVICES:-}"
 
 echo "Using image: ${RUN_IMAGE_URI}"
 echo "Config: ${CONFIG_PATH}"
@@ -135,7 +136,12 @@ if [[ "${MOUNT_GCLOUD:-1}" == "1" && -d "${HOME}/.config/gcloud" ]]; then
   GCLOUD_MOUNT=(-v "${HOME}/.config/gcloud:/root/.config/gcloud:ro")
 fi
 
-docker run --rm --gpus all \
+GPU_FLAG="all"
+if [[ -n "${GPU_DEVICES}" ]]; then
+  GPU_FLAG="device=${GPU_DEVICES}"
+fi
+
+docker run --rm --gpus "${GPU_FLAG}" \
   -e WANDB_MODE=disabled \
   -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
   -e PYTHONPATH=/app/src:/app/third_party/EDMFormer/src/SongFormer:/app/third_party/EDMFormer/src \
