@@ -94,27 +94,57 @@ def _apply_dataloader_overrides(config_path: Path) -> None:
         if value is not None and value != "":
             overrides[key] = value
 
-    if not overrides:
+    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    if not overrides and not data:
         return
 
-    data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    num_workers_override = (
+        int(overrides["DATALOADER_NUM_WORKERS"])
+        if "DATALOADER_NUM_WORKERS" in overrides
+        else None
+    )
+    prefetch_override = (
+        int(overrides["DATALOADER_PREFETCH_FACTOR"])
+        if "DATALOADER_PREFETCH_FACTOR" in overrides
+        else None
+    )
+    persistent_override = (
+        _is_truthy(overrides["DATALOADER_PERSISTENT_WORKERS"])
+        if "DATALOADER_PERSISTENT_WORKERS" in overrides
+        else None
+    )
+    pin_memory_override = (
+        _is_truthy(overrides["DATALOADER_PIN_MEMORY"])
+        if "DATALOADER_PIN_MEMORY" in overrides
+        else None
+    )
     for section in ("train_dataloader", "eval_dataloader"):
         if section not in data or data[section] is None:
             data[section] = {}
-        if "DATALOADER_NUM_WORKERS" in overrides:
-            data[section]["num_workers"] = int(overrides["DATALOADER_NUM_WORKERS"])
-        if "DATALOADER_PREFETCH_FACTOR" in overrides:
-            data[section]["prefetch_factor"] = int(
-                overrides["DATALOADER_PREFETCH_FACTOR"]
-            )
-        if "DATALOADER_PERSISTENT_WORKERS" in overrides:
-            data[section]["persistent_workers"] = _is_truthy(
-                overrides["DATALOADER_PERSISTENT_WORKERS"]
-            )
-        if "DATALOADER_PIN_MEMORY" in overrides:
-            data[section]["pin_memory"] = _is_truthy(
-                overrides["DATALOADER_PIN_MEMORY"]
-            )
+
+        if num_workers_override is not None:
+            data[section]["num_workers"] = num_workers_override
+
+        effective_num_workers = data[section].get("num_workers", 0)
+
+        if effective_num_workers == 0:
+            # PyTorch forbids prefetch_factor when num_workers == 0.
+            if "prefetch_factor" in data[section]:
+                data[section].pop("prefetch_factor", None)
+            if prefetch_override is not None:
+                print(
+                    f"Ignoring prefetch_factor override for {section} because num_workers=0."
+                )
+        elif prefetch_override is not None:
+            data[section]["prefetch_factor"] = prefetch_override
+
+        if persistent_override is not None:
+            data[section]["persistent_workers"] = persistent_override
+        elif effective_num_workers == 0:
+            data[section]["persistent_workers"] = False
+
+        if pin_memory_override is not None:
+            data[section]["pin_memory"] = pin_memory_override
 
     config_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
