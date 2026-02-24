@@ -101,27 +101,45 @@ def main() -> None:
 
     # Replace loss_sum computation to bypass Balancer on multi-GPU.
     if "if use_balancer:" not in text:
-        pattern = (
-            r"(?P<indent>\\s*)loss_sum = balancer\\.cal_mix_loss\\(\\n"
-            r"(?P<body>(?:.|\\n)*?)\\n\\s*\\)"
-        )
-        match = re.search(pattern, text)
-        if not match:
-            raise SystemExit(
-                "Patch failed: expected 'loss_sum = balancer.cal_mix_loss(' block not found in train.py. "
-                "The upstream file may have changed."
-            )
-        indent = match.group("indent")
-        body = match.group("body")
-        replacement = (
-            f"{indent}if use_balancer:\\n"
-            f"{indent}    loss_sum = balancer.cal_mix_loss(\\n"
-            f"{body}\\n"
-            f"{indent}    )\\n"
-            f"{indent}else:\\n"
-            f"{indent}    loss_sum = losses[\"loss_section\"] + losses[\"loss_function\"]"
-        )
-        text = re.sub(pattern, replacement, text, count=1)
+        if "loss_sum = losses[\"loss_section\"] + losses[\"loss_function\"]" not in text:
+            lines = text.splitlines()
+            start_idx = None
+            for i, line in enumerate(lines):
+                if "loss_sum = balancer.cal_mix_loss(" in line:
+                    start_idx = i
+                    break
+            if start_idx is not None:
+                indent = lines[start_idx].split("loss_sum =")[0]
+                # Track parentheses to find the end of the call.
+                paren_count = lines[start_idx].count("(") - lines[start_idx].count(")")
+                end_idx = start_idx
+                for j in range(start_idx + 1, len(lines)):
+                    paren_count += lines[j].count("(") - lines[j].count(")")
+                    if paren_count == 0:
+                        end_idx = j
+                        break
+                if end_idx == start_idx:
+                    raise SystemExit(
+                        "Patch failed: could not find end of balancer.cal_mix_loss(...) call. "
+                        "The upstream file may have changed."
+                    )
+
+                block = lines[start_idx : end_idx + 1]
+                extra_indent = indent + "    "
+                wrapped = [f"{indent}if use_balancer:"]
+                for line in block:
+                    wrapped.append(extra_indent + line[len(indent) :])
+                wrapped.append(f"{indent}else:")
+                wrapped.append(
+                    f"{indent}    loss_sum = losses[\"loss_section\"] + losses[\"loss_function\"]"
+                )
+                lines[start_idx : end_idx + 1] = wrapped
+                text = "\n".join(lines) + "\n"
+            else:
+                print(
+                    "Patch warning: loss_sum = balancer.cal_mix_loss(...) block not found; "
+                    "skipping Balancer patch."
+                )
 
     if "params = model.parameters()" not in text:
         raise SystemExit(
