@@ -21,7 +21,7 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
 fi
 
 GCP_ENV_CONFIG="${GCP_ENV_CONFIG:-config/gcp_env.yaml}"
-if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" || -z "${SPLIT_IDS_GCS:-}" || -z "${EVAL_SPLIT_IDS_GCS:-}" ]]; then
+if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" || -z "${SPLIT_IDS_GCS:-}" || -z "${EVAL_SPLIT_IDS_GCS:-}" || -z "${LABELS_JSONL_GCS:-}" || -z "${EMBEDDINGS_GCS_DIR:-}" ]]; then
   if [[ -f "${GCP_ENV_CONFIG}" ]]; then
     eval "$("${PYTHON_BIN}" - <<'PY'
 import os
@@ -46,7 +46,7 @@ for line in cfg.read_text().splitlines():
         val = val[1:-1]
     data[key] = val
 
-for key in ("REGION", "GCP_PROJECT", "ARTIFACT_REPO", "SPLIT_IDS_GCS", "EVAL_SPLIT_IDS_GCS"):
+for key in ("REGION", "GCP_PROJECT", "ARTIFACT_REPO", "SPLIT_IDS_GCS", "EVAL_SPLIT_IDS_GCS", "LABELS_JSONL_GCS", "EMBEDDINGS_GCS_DIR", "EMBEDDING_SUBDIRS"):
     if os.environ.get(key):
         continue
     value = data.get(key)
