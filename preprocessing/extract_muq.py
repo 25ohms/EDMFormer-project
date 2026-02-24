@@ -230,6 +230,15 @@ def upload_npy(
     blob.upload_from_file(buf, content_type="application/octet-stream")
 
 
+def delete_gcs_prefix(bucket: storage.Bucket, prefix: str) -> int:
+    prefix = prefix.rstrip("/") + "/"
+    blobs = list(bucket.list_blobs(prefix=prefix))
+    if not blobs:
+        return 0
+    bucket.delete_blobs(blobs)
+    return len(blobs)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract MuQ embeddings (30s and 420s)")
     parser.add_argument("--bucket", required=True, help="GCS bucket name")
@@ -270,11 +279,27 @@ def main() -> None:
         default=os.environ.get("MUQ_DEVICE"),
         help="Device override (default: cuda if available else cpu)",
     )
+    parser.add_argument(
+        "--wipe-output",
+        action="store_true",
+        help="Delete existing MuQ embeddings under the output root before writing.",
+    )
     args = parser.parse_args()
 
     ids = read_ids(args.split_ids, args.labels_jsonl)
     client = storage.Client()
     bucket = client.bucket(args.bucket)
+
+    if args.wipe_output:
+        removed_30s = delete_gcs_prefix(
+            bucket, f"{args.output_root.rstrip('/')}/muq_30s"
+        )
+        removed_420s = delete_gcs_prefix(
+            bucket, f"{args.output_root.rstrip('/')}/muq_420s"
+        )
+        print(
+            f"Deleted {removed_30s} blobs under muq_30s and {removed_420s} under muq_420s."
+        )
 
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     model_path = args.muq_model
