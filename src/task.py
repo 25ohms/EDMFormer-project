@@ -103,6 +103,12 @@ def main() -> None:
         "--dataset-type",
         default=os.environ.get("DATASET_TYPE", "EDMFormer"),
     )
+    parser.add_argument(
+        "--num-gpus",
+        type=int,
+        default=int(os.environ.get("NUM_GPUS", "1")),
+        help="Number of GPUs to use on a single node (GPU backend only).",
+    )
     train_backend = os.environ.get("TRAIN_BACKEND", "GPU").upper()
     default_train_script = (
         "src/tpu_train.py"
@@ -225,6 +231,16 @@ def main() -> None:
     env["PYTHONPATH"] = f"{src_root}:{workdir}:{env.get('PYTHONPATH', '')}"
 
     cmd = [sys.executable, str(train_script)] + train_args
+    if train_backend == "GPU" and args.num_gpus > 1:
+        cmd = [
+            sys.executable,
+            "-m",
+            "torch.distributed.run",
+            "--standalone",
+            "--nproc_per_node",
+            str(args.num_gpus),
+            str(train_script),
+        ] + train_args
     print(f"Launching training: {' '.join(cmd)}")
     subprocess.run(cmd, check=True, cwd=workdir, env=env)
 
