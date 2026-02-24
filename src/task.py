@@ -208,6 +208,14 @@ def main() -> None:
         raise SystemExit(
             "TRAIN_BACKEND=TPU requires --train-script to point to src/tpu_train.py."
         )
+    if train_backend == "TPU":
+        try:
+            import torch_xla  # noqa: F401
+        except Exception as exc:  # pragma: no cover
+            raise SystemExit(
+                "TRAIN_BACKEND=TPU requires an XLA runtime. "
+                "Use docker/training_tpu.Dockerfile (runtime-xla base image)."
+            ) from exc
     workdir = Path("third_party/EDMFormer/src/SongFormer").resolve()
     repo_root = Path(__file__).resolve().parents[1]
     src_root = repo_root / "src"
