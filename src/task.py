@@ -62,8 +62,15 @@ def resolve_embedding_dirs(base_or_list: str, subdirs: list[str]) -> list[str]:
     return [f"{base}/{subdir}" for subdir in subdirs]
 
 
-def ensure_arg(args_list: list[str], flag: str, value: str) -> list[str]:
+def _has_flag(args_list: list[str], flag: str) -> bool:
     if flag in args_list:
+        return True
+    flag_eq = f"{flag}="
+    return any(arg.startswith(flag_eq) for arg in args_list)
+
+
+def ensure_arg(args_list: list[str], flag: str, value: str) -> list[str]:
+    if _has_flag(args_list, flag):
         return args_list
     return args_list + [flag, value]
 
@@ -155,7 +162,7 @@ def main() -> None:
             "INPUT_EMBEDDING_DIR_GCS."
         )
 
-    if "--checkpoint_dir" in args.train_args and args.checkpoint_dir:
+    if _has_flag(args.train_args, "--checkpoint_dir") and args.checkpoint_dir:
         raise SystemExit(
             "Provide checkpoint dir via --checkpoint-dir or --train-args --checkpoint_dir, not both."
         )
@@ -216,6 +223,8 @@ def main() -> None:
         train_args = ensure_arg(train_args, "--checkpoint_dir", str(local_checkpoint_dir))
 
     train_script = Path(args.train_script).resolve()
+    if not train_script.exists():
+        raise SystemExit(f"Train script not found: {train_script}")
     if train_backend == "TPU" and "tpu_train.py" not in train_script.as_posix():
         raise SystemExit(
             "TRAIN_BACKEND=TPU requires --train-script to point to src/tpu_train.py."
@@ -228,6 +237,19 @@ def main() -> None:
                 "TRAIN_BACKEND=TPU requires an XLA runtime. "
                 "Use docker/training_tpu.Dockerfile (runtime-xla base image)."
             ) from exc
+    if train_backend == "GPU" and args.num_gpus < 1:
+        raise SystemExit("--num-gpus must be >= 1 for GPU training.")
+    if train_backend == "GPU" and args.num_gpus > 1:
+        try:
+            import torch
+
+            gpu_count = torch.cuda.device_count()
+            if gpu_count and args.num_gpus > gpu_count:
+                raise SystemExit(
+                    f"Requested {args.num_gpus} GPUs but only {gpu_count} detected."
+                )
+        except Exception:
+            pass
     workdir = Path("third_party/EDMFormer/src/SongFormer").resolve()
     repo_root = Path(__file__).resolve().parents[1]
     src_root = repo_root / "src"
