@@ -9,15 +9,16 @@ def main() -> None:
 
     # Patch 1: ensure model_ema exists on all ranks (avoids UnboundLocalError).
     if "model_ema = None" not in text:
-        pattern = r"(\n\s*params = model\.parameters\(\)\n)(\s*if accelerator\.is_main_process:)"
+        pattern = r"\n(\s*params = model\.parameters\(\))\n"
         match = re.search(pattern, text)
         if not match:
             raise SystemExit(
-                "Patch failed: expected 'params = model.parameters()' block not found in train.py. "
+                "Patch failed: expected 'params = model.parameters()' line not found in train.py. "
                 "The upstream file may have changed."
             )
 
-        replacement = match.group(1) + "    model_ema = None\\n" + match.group(2)
+        indent = match.group(1).split("params =")[0]
+        replacement = f"\n{match.group(1)}\n{indent}model_ema = None"
         text = re.sub(pattern, replacement, text, count=1)
 
     # Patch 2: enable find_unused_parameters via Accelerate DDP kwargs.
@@ -36,34 +37,34 @@ def main() -> None:
             text = re.sub(import_pattern, f"from accelerate.utils import {new_imports}", text, count=1)
 
     # Inject kwargs_handlers into the Accelerator(...) call if missing.
-    if "kwargs_handlers" not in text:
-        lines = text.splitlines()
-        accel_idx = None
-        for i, line in enumerate(lines):
-            if "accelerator = Accelerator(" in line:
-                accel_idx = i
-                break
+    lines = text.splitlines()
+    accel_idx = None
+    for i, line in enumerate(lines):
+        if "accelerator = Accelerator(" in line:
+            accel_idx = i
+            break
 
-        if accel_idx is None:
-            raise SystemExit(
-                "Patch failed: expected 'accelerator = Accelerator(' block not found in train.py. "
-                "The upstream file may have changed."
-            )
+    if accel_idx is None:
+        raise SystemExit(
+            "Patch failed: expected 'accelerator = Accelerator(' block not found in train.py. "
+            "The upstream file may have changed."
+        )
 
-        # Find the closing parenthesis of the Accelerator(...) call.
+    close_idx = None
+    for j in range(accel_idx + 1, len(lines)):
+        if lines[j].strip() == ")":
+            close_idx = j
+            break
+
+    if close_idx is None:
+        raise SystemExit(
+            "Patch failed: could not find end of Accelerator(...) call in train.py. "
+            "The upstream file may have changed."
+        )
+
+    accelerator_block = "\n".join(lines[accel_idx : close_idx + 1])
+    if "kwargs_handlers" not in accelerator_block:
         indent = lines[accel_idx].split("accelerator = Accelerator(")[0]
-        close_idx = None
-        for j in range(accel_idx + 1, len(lines)):
-            if lines[j].strip() == ")":
-                close_idx = j
-                break
-
-        if close_idx is None:
-            raise SystemExit(
-                "Patch failed: could not find end of Accelerator(...) call in train.py. "
-                "The upstream file may have changed."
-            )
-
         arg_indent = indent + "    "
         lines.insert(
             close_idx,
@@ -71,10 +72,9 @@ def main() -> None:
         )
         text = "\n".join(lines) + "\n"
 
-    pattern = r"(\n\s*params = model\.parameters\(\)\n)(\s*if accelerator\.is_main_process:)"
-    if not re.search(pattern, text):
+    if "params = model.parameters()" not in text:
         raise SystemExit(
-            "Patch failed: expected 'params = model.parameters()' block not found after patching. "
+            "Patch failed: expected 'params = model.parameters()' line not found after patching. "
             "The upstream file may have changed."
         )
 
