@@ -67,6 +67,25 @@ EOF
   exit 1
 fi
 
+normalize_gcs_uri() {
+  local uri="$1"
+  if [[ "${uri}" == gs:/* && "${uri}" != gs://* ]]; then
+    echo "gs://${uri#gs:/}"
+  else
+    echo "${uri}"
+  fi
+}
+
+if [[ -n "${SPLIT_IDS_GCS:-}" ]]; then
+  SPLIT_IDS_GCS="$(normalize_gcs_uri "${SPLIT_IDS_GCS}")"
+fi
+if [[ -n "${LABELS_JSONL_GCS:-}" ]]; then
+  LABELS_JSONL_GCS="$(normalize_gcs_uri "${LABELS_JSONL_GCS}")"
+fi
+if [[ -n "${EMBEDDINGS_GCS_DIR:-}" ]]; then
+  EMBEDDINGS_GCS_DIR="$(normalize_gcs_uri "${EMBEDDINGS_GCS_DIR}")"
+fi
+
 DOCKERFILE="${DOCKERFILE:-docker/preprocessing.Dockerfile}"
 IMAGE_NAME="${IMAGE_NAME:-edmformer-preprocess}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"

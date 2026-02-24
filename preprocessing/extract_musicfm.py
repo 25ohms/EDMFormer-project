@@ -26,27 +26,41 @@ TARGET_SAMPLE_RATE = 24000
 MUSICFM_HF_BASE = "https://huggingface.co/minzwon/MusicFM/resolve/main"
 
 
+def normalize_gcs_uri(uri: str) -> str:
+    if uri.startswith("gs:/") and not uri.startswith("gs://"):
+        return "gs://" + uri[4:]
+    return uri
+
+
+def read_text_uri(uri: str, client: storage.Client | None = None) -> str:
+    uri = normalize_gcs_uri(uri)
+    if uri.startswith("gs://"):
+        bucket_name, blob_name = parse_gcs_uri(uri)
+        client = client or storage.Client()
+        blob = client.bucket(bucket_name).blob(blob_name)
+        return blob.download_as_text(encoding="utf-8")
+    return Path(uri).read_text(encoding="utf-8")
+
+
 def read_ids(split_ids_path: str | None, labels_jsonl_path: str | None) -> list[str]:
     if split_ids_path:
-        return [
-            line.strip()
-            for line in Path(split_ids_path).read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        text = read_text_uri(split_ids_path)
+        return [line.strip() for line in text.splitlines() if line.strip()]
     if labels_jsonl_path:
+        text = read_text_uri(labels_jsonl_path)
         ids: list[str] = []
-        with Path(labels_jsonl_path).open("r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                record = json.loads(line)
-                ids.append(str(record["id"]))
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            ids.append(str(record["id"]))
         return ids
     raise ValueError("Provide --split-ids or --labels-jsonl")
 
 
 def parse_gcs_uri(uri: str) -> tuple[str, str]:
+    uri = normalize_gcs_uri(uri)
     if not uri.startswith("gs://"):
         raise ValueError(f"Not a GCS URI: {uri}")
     bucket, blob = uri[5:].split("/", 1)
