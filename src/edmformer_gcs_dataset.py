@@ -314,7 +314,7 @@ class Dataset(Dataset):
                     float(local_times[int(np.flatnonzero(keep_boundarys)[-1])]),
                     str(
                         self.id_to_label[
-                            int(local_labels[int(np.flatnonzero(keep_boundarys)[-1])])]
+                            int(local_labels[int(np.flatnonzero(keep_boundarys)[-1])])
                         ]
                     ),
                 )

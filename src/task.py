@@ -68,6 +68,12 @@ def ensure_arg(args_list: list[str], flag: str, value: str) -> list[str]:
     return args_list + [flag, value]
 
 
+def _is_truthy(value: str | None) -> bool:
+    if value is None:
+        return False
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Vertex AI CustomJob entrypoint")
     parser.add_argument(
@@ -229,6 +235,9 @@ def main() -> None:
     env = os.environ.copy()
     env.setdefault("HYDRA_FULL_ERROR", "1")
     env["PYTHONPATH"] = f"{src_root}:{workdir}:{env.get('PYTHONPATH', '')}"
+    # If no W&B key is provided, default to disabled to avoid no-tty failures.
+    if not env.get("WANDB_API_KEY") and not _is_truthy(env.get("WANDB_FORCE_ENABLE")):
+        env.setdefault("WANDB_DISABLED", "true")
 
     cmd = [sys.executable, str(train_script)] + train_args
     if train_backend == "GPU" and args.num_gpus > 1:
