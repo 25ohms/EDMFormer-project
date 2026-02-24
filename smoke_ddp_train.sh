@@ -21,7 +21,7 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
 fi
 
 GCP_ENV_CONFIG="${GCP_ENV_CONFIG:-config/gcp_env.yaml}"
-if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" ]]; then
+if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" || -z "${SPLIT_IDS_GCS:-}" || -z "${EVAL_SPLIT_IDS_GCS:-}" ]]; then
   if [[ -f "${GCP_ENV_CONFIG}" ]]; then
     eval "$("${PYTHON_BIN}" - <<'PY'
 import os
@@ -46,7 +46,7 @@ for line in cfg.read_text().splitlines():
         val = val[1:-1]
     data[key] = val
 
-for key in ("REGION", "GCP_PROJECT", "ARTIFACT_REPO"):
+for key in ("REGION", "GCP_PROJECT", "ARTIFACT_REPO", "SPLIT_IDS_GCS", "EVAL_SPLIT_IDS_GCS"):
     if os.environ.get(key):
         continue
     value = data.get(key)
@@ -70,6 +70,8 @@ fi
 IMAGE_NAME="${IMAGE_NAME:-edmformer-train}"
 TAG="${TAG:-}"
 IMAGE_REPO="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}"
+USE_LATEST="${USE_LATEST:-1}"
+PULL_IMAGE="${PULL_IMAGE:-1}"
 
 if [[ -z "${IMAGE_URI:-}" && -z "${TAG}" ]]; then
   if command -v gcloud >/dev/null 2>&1; then
@@ -90,19 +92,56 @@ if [[ -z "${IMAGE_URI:-}" && -z "${TAG}" ]]; then
 fi
 
 IMAGE_URI="${IMAGE_URI:-${IMAGE_REPO}:${TAG}}"
+RUN_IMAGE_URI="${IMAGE_URI}"
+
+if [[ "${USE_LATEST}" == "1" && "${IMAGE_URI}" != "${IMAGE_REPO}:latest" ]]; then
+  if docker image inspect "${IMAGE_URI}" >/dev/null 2>&1; then
+    docker tag "${IMAGE_URI}" "${IMAGE_REPO}:latest"
+    RUN_IMAGE_URI="${IMAGE_REPO}:latest"
+  else
+    if docker pull "${IMAGE_URI}" >/dev/null 2>&1; then
+      docker tag "${IMAGE_URI}" "${IMAGE_REPO}:latest"
+      RUN_IMAGE_URI="${IMAGE_REPO}:latest"
+    fi
+  fi
+fi
 CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}"
 NPROC="${NPROC:-2}"
 MAX_STEPS="${MAX_STEPS:-1}"
 
-echo "Using image: ${IMAGE_URI}"
+echo "Using image: ${RUN_IMAGE_URI}"
 echo "Config: ${CONFIG_PATH}"
 echo "DDP processes: ${NPROC}"
 echo "Max steps: ${MAX_STEPS}"
 
+if [[ "${PULL_IMAGE}" == "1" ]]; then
+  docker pull "${RUN_IMAGE_URI}"
+fi
+
+# Ensure eval split exists in GCS if configured.
+if [[ "${ENSURE_VAL_SPLIT:-1}" == "1" && -n "${SPLIT_IDS_GCS:-}" && -n "${EVAL_SPLIT_IDS_GCS:-}" ]]; then
+  if command -v gcloud >/dev/null 2>&1; then
+    if ! gcloud storage ls "${EVAL_SPLIT_IDS_GCS}" >/dev/null 2>&1; then
+      echo "Eval split not found at ${EVAL_SPLIT_IDS_GCS}; copying from ${SPLIT_IDS_GCS}"
+      gcloud storage cp "${SPLIT_IDS_GCS}" "${EVAL_SPLIT_IDS_GCS}"
+    fi
+  else
+    echo "gcloud not found; skipping eval split check."
+  fi
+fi
+
+GCLOUD_MOUNT=()
+if [[ "${MOUNT_GCLOUD:-1}" == "1" && -d "${HOME}/.config/gcloud" ]]; then
+  GCLOUD_MOUNT=(-v "${HOME}/.config/gcloud:/root/.config/gcloud:ro")
+fi
+
 docker run --rm --gpus all \
   -e WANDB_MODE=disabled \
   -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
-  "${IMAGE_URI}" \
+  -e PYTHONPATH=/app/src:/app/third_party/EDMFormer/src/SongFormer:/app/third_party/EDMFormer/src \
+  -w /app/third_party/EDMFormer/src/SongFormer \
+  "${GCLOUD_MOUNT[@]}" \
+  "${RUN_IMAGE_URI}" \
   python -m torch.distributed.run --standalone --nproc_per_node "${NPROC}" \
     /app/third_party/EDMFormer/src/SongFormer/train/train.py \
     --config "${CONFIG_PATH}" \
