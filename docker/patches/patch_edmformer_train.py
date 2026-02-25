@@ -193,6 +193,25 @@ def main() -> None:
                 lines.insert(i, f"{indent}should_stop = torch.tensor(0, device=device)")
                 inserted_init = True
                 break
+            if "global_step % args.eval_interval == 0" in line:
+                # Handle multiline eval condition:
+                # if (
+                #     accelerator.sync_gradients
+                #     and global_step % args.eval_interval == 0
+                # ):
+                insert_idx = None
+                for j in range(i, max(-1, i - 6), -1):
+                    if lines[j].lstrip().startswith("if "):
+                        insert_idx = j
+                        break
+                if insert_idx is not None:
+                    indent = lines[insert_idx].split("if")[0]
+                    lines.insert(
+                        insert_idx,
+                        f"{indent}should_stop = torch.tensor(0, device=device)",
+                    )
+                    inserted_init = True
+                    break
         if not inserted_init:
             raise SystemExit(
                 "Patch failed: could not insert should_stop initializer before eval condition."
