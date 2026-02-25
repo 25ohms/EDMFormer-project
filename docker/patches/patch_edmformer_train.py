@@ -147,8 +147,51 @@ def main() -> None:
             "The upstream file may have changed."
         )
 
+    # Patch 4: ensure all ranks skip batches consistently when collate_fn returns None.
+    if "skip_batch = torch.tensor(1, device=device)" not in text:
+        lines = text.splitlines()
+        target_idx = None
+        for i, line in enumerate(lines):
+            if line.strip() == "if batch is None:":
+                target_idx = i
+                break
+        if target_idx is None:
+            raise SystemExit(
+                "Patch failed: expected 'if batch is None:' line not found in train.py. "
+                "The upstream file may have changed."
+            )
+        if target_idx + 1 >= len(lines) or lines[target_idx + 1].strip() != "continue":
+            raise SystemExit(
+                "Patch failed: expected 'continue' after 'if batch is None:' in train.py. "
+                "The upstream file may have changed."
+            )
+
+        indent = lines[target_idx].split("if batch is None:")[0]
+        replacement = [
+            f"{indent}if batch is None:",
+            f"{indent}    skip_batch = torch.tensor(1, device=device)",
+            f"{indent}else:",
+            f"{indent}    skip_batch = torch.tensor(0, device=device)",
+            f"{indent}if accelerator.gather(skip_batch).max().item() > 0:",
+            f"{indent}    continue",
+        ]
+        lines[target_idx : target_idx + 2] = replacement
+        text = "\n".join(lines) + "\n"
+
     path.write_text(text)
     print("Patch applied.")
+
+    # Patch SongFormer loss initialization to keep graph for DDP.
+    model_path = Path("/app/third_party/EDMFormer/src/SongFormer/models/SongFormer.py")
+    model_text = model_path.read_text()
+    if "loss = 0.0" in model_text:
+        model_text = model_text.replace(
+            "loss = 0.0",
+            "loss = torch.zeros((), device=outputs[\"function_logits\"].device)",
+            1,
+        )
+        model_path.write_text(model_text)
+        print("Patched SongFormer compute_losses loss init.")
 
 
 if __name__ == "__main__":
