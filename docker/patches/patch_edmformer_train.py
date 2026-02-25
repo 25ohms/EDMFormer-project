@@ -147,22 +147,26 @@ def main() -> None:
             "The upstream file may have changed."
         )
 
-    # Patch 4: ensure all ranks skip batches consistently when collate_fn returns None.
+    # Patch 4: ensure all ranks skip batches consistently in the training loop only.
     if "skip_batch = torch.tensor(1, device=device)" not in text:
         lines = text.splitlines()
         target_idx = None
         for i, line in enumerate(lines):
-            if line.strip() == "if batch is None:":
-                target_idx = i
+            if "for step, batch in enumerate(data_loader):" in line:
+                # Find the first `if batch is None:` after the training loop starts.
+                for j in range(i + 1, min(i + 120, len(lines))):
+                    if lines[j].strip() == "if batch is None:":
+                        target_idx = j
+                        break
                 break
         if target_idx is None:
             raise SystemExit(
-                "Patch failed: expected 'if batch is None:' line not found in train.py. "
+                "Patch failed: expected training-loop 'if batch is None:' line not found in train.py. "
                 "The upstream file may have changed."
             )
         if target_idx + 1 >= len(lines) or lines[target_idx + 1].strip() != "continue":
             raise SystemExit(
-                "Patch failed: expected 'continue' after 'if batch is None:' in train.py. "
+                "Patch failed: expected 'continue' after 'if batch is None:' in training loop. "
                 "The upstream file may have changed."
             )
 
