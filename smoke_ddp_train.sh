@@ -215,6 +215,75 @@ if [[ "${USE_HOST_IPC}" == "1" ]]; then
   DOCKER_IPC_ARGS=(--ipc=host)
 fi
 
+COMMAND=$(cat <<'BASH'
+if [[ "${VERIFY_TRAIN_SCRIPT}" == "1" ]]; then
+  python - <<'PY'
+import sys
+from pathlib import Path
+try:
+    import yaml
+except Exception as exc:
+    print('PyYAML missing; cannot verify config', file=sys.stderr)
+    raise
+
+config_path = Path("${CONFIG_PATH}")
+train_path = Path('/app/third_party/EDMFormer/src/SongFormer/train/train.py')
+
+if not train_path.exists():
+    raise SystemExit(f'missing train.py at {train_path}')
+
+text = train_path.read_text()
+required = [
+    'dataset_9_HitRate_0.5F',
+    'dataset_9_HitRate_3F',
+    'score = 0.5 * (hr05 + hr3)'
+]
+missing = [r for r in required if r not in text]
+if missing:
+    raise SystemExit(f'train.py missing expected markers: {missing}')
+
+if not config_path.exists():
+    raise SystemExit(f'missing config at {config_path}')
+
+cfg = yaml.safe_load(config_path.read_text()) or {}
+expect = {
+    'down_sample_conv_stride': 2,
+    'downsample_rates': 2,
+    'output_logits_frame_rates': 12.5,
+    'frame_rates': 12.5,
+    'loss_weight_section': 0.4,
+    'loss_weight_function': 0.6,
+    'boundary_tvloss_weight': 0.03,
+    'num_neighbors': 12,
+}
+for key, val in expect.items():
+    if cfg.get(key) != val:
+        raise SystemExit(f'config {key}={cfg.get(key)} (expected {val})')
+
+print('Verified train.py markers and config values')
+PY
+fi
+
+if [[ "${USE_TASK_ENTRYPOINT}" == "1" ]]; then
+  python /app/src/task.py \
+    --config-path "${CONFIG_PATH}" \
+    --num-gpus "${NPROC}" \
+    --checkpoint-dir /tmp/edmformer-smoke \
+    --init-seed 42 \
+    --train-args --max_steps "${MAX_STEPS}" --max_epochs 1 --log_interval 1
+else
+  python -m torch.distributed.run --standalone --nproc_per_node "${NPROC}" \
+    /app/third_party/EDMFormer/src/SongFormer/train/train.py \
+    --config "${CONFIG_PATH}" \
+    --init_seed 42 \
+    --checkpoint_dir /tmp/edmformer-smoke \
+    --max_steps "${MAX_STEPS}" \
+    --max_epochs 1 \
+    --log_interval 1
+fi
+BASH
+)
+
 docker run --rm "${DOCKER_GPU_ARGS[@]}" "${DOCKER_IPC_ARGS[@]}" \
   --shm-size="${SHM_SIZE}" \
   -e WANDB_MODE=disabled \
@@ -235,71 +304,6 @@ docker run --rm "${DOCKER_GPU_ARGS[@]}" "${DOCKER_IPC_ARGS[@]}" \
   "${GCLOUD_MOUNT[@]}" \
   "${NVIDIA_DEVICES[@]}" \
   "${RUN_IMAGE_URI}" \
-  bash -c "\
-    if [[ '${VERIFY_TRAIN_SCRIPT}' == '1' ]]; then \
-      python - <<'PY'\n\
-import sys\n\
-from pathlib import Path\n\
-try:\n\
-    import yaml\n\
-except Exception as exc:\n\
-    print('PyYAML missing; cannot verify config', file=sys.stderr)\n\
-    raise\n\
-\n\
-config_path = Path('${CONFIG_PATH}')\n\
-train_path = Path('/app/third_party/EDMFormer/src/SongFormer/train/train.py')\n\
-\n\
-if not train_path.exists():\n\
-    raise SystemExit(f'missing train.py at {train_path}')\n\
-\n\
-text = train_path.read_text()\n\
-required = [\n\
-    'dataset_9_HitRate_0.5F',\n\
-    'dataset_9_HitRate_3F',\n\
-    'score = 0.5 * (hr05 + hr3)'\n\
-]\n\
-missing = [r for r in required if r not in text]\n\
-if missing:\n\
-    raise SystemExit(f'train.py missing expected markers: {missing}')\n\
-\n\
-if not config_path.exists():\n\
-    raise SystemExit(f'missing config at {config_path}')\n\
-\n\
-cfg = yaml.safe_load(config_path.read_text()) or {}\n\
-expect = {\n\
-    'down_sample_conv_stride': 2,\n\
-    'downsample_rates': 2,\n\
-    'output_logits_frame_rates': 12.5,\n\
-    'frame_rates': 12.5,\n\
-    'loss_weight_section': 0.4,\n\
-    'loss_weight_function': 0.6,\n\
-    'boundary_tvloss_weight': 0.03,\n\
-    'num_neighbors': 12,\n\
-}\n\
-for key, val in expect.items():\n\
-    if cfg.get(key) != val:\n\
-        raise SystemExit(f'config {key}={cfg.get(key)} (expected {val})')\n\
-\n\
-print('Verified train.py markers and config values')\n\
-PY\n\
-    fi; \
-    if [[ '${USE_TASK_ENTRYPOINT}' == '1' ]]; then \
-      python /app/src/task.py \
-        --config-path '${CONFIG_PATH}' \
-        --num-gpus '${NPROC}' \
-        --checkpoint-dir /tmp/edmformer-smoke \
-        --init-seed 42 \
-        --train-args --max_steps '${MAX_STEPS}' --max_epochs 1 --log_interval 1; \
-    else \
-      python -m torch.distributed.run --standalone --nproc_per_node '${NPROC}' \
-        /app/third_party/EDMFormer/src/SongFormer/train/train.py \
-        --config '${CONFIG_PATH}' \
-        --init_seed 42 \
-        --checkpoint_dir /tmp/edmformer-smoke \
-        --max_steps '${MAX_STEPS}' \
-        --max_epochs 1 \
-        --log_interval 1; \
-    fi\
-  "
+  bash -c "${COMMAND}"
 
 echo "DDP smoke test completed."
