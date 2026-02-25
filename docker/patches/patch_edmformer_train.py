@@ -185,22 +185,17 @@ def main() -> None:
     # Patch 5: synchronize early stopping across ranks to avoid collective mismatch.
     if "stop_flag = accelerator.gather(should_stop).max().item()" not in text:
         lines = text.splitlines()
-        # Insert should_stop initializer after eval wait_for_everyone inside eval block.
+        # Insert should_stop initializer before eval condition inside training loop.
         inserted_init = False
         for i, line in enumerate(lines):
-            if line.strip() == "accelerator.wait_for_everyone()":
-                # Heuristic: choose the eval block one with extra indentation (inside training loop).
-                if line.startswith("                            ") and i + 1 < len(lines):
-                    indent = line.split("accelerator.wait_for_everyone()")[0]
-                    lines.insert(
-                        i + 1,
-                        f"{indent}should_stop = torch.tensor(0, device=device)",
-                    )
-                    inserted_init = True
-                    break
+            if line.strip() == "if accelerator.sync_gradients and global_step % args.eval_interval == 0:":
+                indent = line.split("if accelerator.sync_gradients")[0]
+                lines.insert(i, f"{indent}should_stop = torch.tensor(0, device=device)")
+                inserted_init = True
+                break
         if not inserted_init:
             raise SystemExit(
-                "Patch failed: could not insert should_stop initializer after eval wait_for_everyone()."
+                "Patch failed: could not insert should_stop initializer before eval condition."
             )
 
         # Replace early stopping break with should_stop flag set.
@@ -216,6 +211,7 @@ def main() -> None:
                     f"{indent}if no_improve_steps >= early_stop_patience:",
                     f"{indent}    print(\"Early stopping triggered.\")",
                     f"{indent}    should_stop = torch.tensor(1, device=device)",
+                    f"{indent}    accelerator.print(\"Early stop flag set\")",
                 ]
                 replaced = True
                 break
@@ -234,6 +230,7 @@ def main() -> None:
                         f"{indent}if accelerator.sync_gradients and global_step % args.eval_interval == 0:",
                         f"{indent}    stop_flag = accelerator.gather(should_stop).max().item()",
                         f"{indent}    if stop_flag > 0:",
+                        f"{indent}        accelerator.print(\"Early stop broadcast received\")",
                         f"{indent}        break",
                     ]
                     lines[i:i] = block
