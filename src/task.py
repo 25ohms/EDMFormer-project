@@ -82,9 +82,10 @@ def _is_truthy(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _apply_dataloader_overrides(config_path: Path) -> None:
+def _apply_config_overrides(config_path: Path) -> None:
     overrides: dict[str, str] = {}
     for key in (
+        "ACCUMULATION_STEPS",
         "DATALOADER_NUM_WORKERS",
         "DATALOADER_PREFETCH_FACTOR",
         "DATALOADER_PERSISTENT_WORKERS",
@@ -97,6 +98,10 @@ def _apply_dataloader_overrides(config_path: Path) -> None:
     data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
     if not overrides and not data:
         return
+
+    if "ACCUMULATION_STEPS" in overrides:
+        data["accumulation_steps"] = int(overrides["ACCUMULATION_STEPS"])
+        print(f"Override: accumulation_steps={data['accumulation_steps']}")
 
     num_workers_override = (
         int(overrides["DATALOADER_NUM_WORKERS"])
@@ -288,7 +293,7 @@ def main() -> None:
         input_embedding_dir=local_input_embedding_dir,
         dataset_type=args.dataset_type,
     )
-    _apply_dataloader_overrides(config_path)
+    _apply_config_overrides(config_path)
 
     train_args = list(args.train_args)
     train_args = ensure_arg(train_args, "--config", str(config_path))
