@@ -216,6 +216,7 @@ if [[ "${USE_HOST_IPC}" == "1" ]]; then
 fi
 
 COMMAND=$(cat <<'BASH'
+set -e
 if [[ "${VERIFY_TRAIN_SCRIPT}" == "1" ]]; then
   python - <<'PY'
 import sys
@@ -288,6 +289,10 @@ docker run --rm "${DOCKER_GPU_ARGS[@]}" "${DOCKER_IPC_ARGS[@]}" \
   --shm-size="${SHM_SIZE}" \
   -e WANDB_MODE=disabled \
   -e TORCH_DISTRIBUTED_DEBUG=DETAIL \
+  -e CONFIG_PATH="${CONFIG_PATH}" \
+  -e NPROC="${NPROC}" \
+  -e MAX_STEPS="${MAX_STEPS}" \
+  -e USE_TASK_ENTRYPOINT="${USE_TASK_ENTRYPOINT}" \
   -e PYTHONPATH=/app/src:/app/third_party/EDMFormer/src/SongFormer:/app/third_party/EDMFormer/src \
   -e LABEL_PATH_GCS="${LABEL_PATH_GCS}" \
   -e SPLIT_IDS_PATH_GCS="${SPLIT_IDS_PATH_GCS}" \
