@@ -86,6 +86,7 @@ def _apply_config_overrides(config_path: Path) -> None:
     overrides: dict[str, str] = {}
     for key in (
         "ACCUMULATION_STEPS",
+        "EARLY_STOPPING_STEP",
         "DATALOADER_NUM_WORKERS",
         "DATALOADER_PREFETCH_FACTOR",
         "DATALOADER_PERSISTENT_WORKERS",
@@ -102,6 +103,9 @@ def _apply_config_overrides(config_path: Path) -> None:
     if "ACCUMULATION_STEPS" in overrides:
         data["accumulation_steps"] = int(overrides["ACCUMULATION_STEPS"])
         print(f"Override: accumulation_steps={data['accumulation_steps']}")
+    if "EARLY_STOPPING_STEP" in overrides:
+        data["early_stopping_step"] = int(overrides["EARLY_STOPPING_STEP"])
+        print(f"Override: early_stopping_step={data['early_stopping_step']}")
 
     num_workers_override = (
         int(overrides["DATALOADER_NUM_WORKERS"])
@@ -376,10 +380,20 @@ def main() -> None:
             str(train_script),
         ] + train_args
     print(f"Launching training: {' '.join(cmd)}")
-    subprocess.run(cmd, check=True, cwd=workdir, env=env)
+    run_error = None
+    try:
+        subprocess.run(cmd, check=True, cwd=workdir, env=env)
+    except subprocess.CalledProcessError as exc:
+        run_error = exc
+    finally:
+        if checkpoint_gcs and local_checkpoint_dir is not None:
+            try:
+                upload_dir_to_gcs(client, local_checkpoint_dir, checkpoint_gcs)
+            except Exception as exc:
+                print(f"Failed to upload checkpoints to {checkpoint_gcs}: {exc}")
 
-    if checkpoint_gcs and local_checkpoint_dir is not None:
-        upload_dir_to_gcs(client, local_checkpoint_dir, checkpoint_gcs)
+    if run_error is not None:
+        raise run_error
 
 
 if __name__ == "__main__":

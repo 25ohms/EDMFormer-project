@@ -182,6 +182,70 @@ def main() -> None:
         lines[target_idx : target_idx + 2] = replacement
         text = "\n".join(lines) + "\n"
 
+    # Patch 5: synchronize early stopping across ranks to avoid collective mismatch.
+    if "stop_flag = accelerator.gather(should_stop).max().item()" not in text:
+        lines = text.splitlines()
+        # Insert should_stop initializer after eval wait_for_everyone inside eval block.
+        inserted_init = False
+        for i, line in enumerate(lines):
+            if line.strip() == "accelerator.wait_for_everyone()":
+                # Heuristic: choose the eval block one with extra indentation (inside training loop).
+                if line.startswith("                            ") and i + 1 < len(lines):
+                    indent = line.split("accelerator.wait_for_everyone()")[0]
+                    lines.insert(
+                        i + 1,
+                        f"{indent}should_stop = torch.tensor(0, device=device)",
+                    )
+                    inserted_init = True
+                    break
+        if not inserted_init:
+            raise SystemExit(
+                "Patch failed: could not insert should_stop initializer after eval wait_for_everyone()."
+            )
+
+        # Replace early stopping break with should_stop flag set.
+        replaced = False
+        for i in range(len(lines) - 2):
+            if (
+                lines[i].strip() == "if no_improve_steps >= early_stop_patience:"
+                and lines[i + 1].strip() == "print(\"Early stopping triggered.\")"
+                and lines[i + 2].strip() == "break"
+            ):
+                indent = lines[i].split("if no_improve_steps >= early_stop_patience:")[0]
+                lines[i : i + 3] = [
+                    f"{indent}if no_improve_steps >= early_stop_patience:",
+                    f"{indent}    print(\"Early stopping triggered.\")",
+                    f"{indent}    should_stop = torch.tensor(1, device=device)",
+                ]
+                replaced = True
+                break
+        if not replaced:
+            raise SystemExit(
+                "Patch failed: expected early stopping break block not found."
+            )
+
+        # Insert stop_flag sync before the outer wait_for_everyone() after eval block.
+        inserted_stop = False
+        for i, line in enumerate(lines):
+            if line.strip() == "accelerator.wait_for_everyone()":
+                if line.startswith("                        "):
+                    indent = line.split("accelerator.wait_for_everyone()")[0]
+                    block = [
+                        f"{indent}if accelerator.sync_gradients and global_step % args.eval_interval == 0:",
+                        f"{indent}    stop_flag = accelerator.gather(should_stop).max().item()",
+                        f"{indent}    if stop_flag > 0:",
+                        f"{indent}        break",
+                    ]
+                    lines[i:i] = block
+                    inserted_stop = True
+                    break
+        if not inserted_stop:
+            raise SystemExit(
+                "Patch failed: could not insert stop_flag sync before wait_for_everyone()."
+            )
+
+        text = "\n".join(lines) + "\n"
+
     path.write_text(text)
     print("Patch applied.")
 
