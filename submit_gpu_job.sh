@@ -74,8 +74,6 @@ IMAGE_NAME="${IMAGE_NAME:-edmformer-train}"
 TAG="${TAG:-$(date +%Y%m%d-%H%M%S)}"
 IMAGE_REPO="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}"
 IMAGE_URI="${IMAGE_URI:-${IMAGE_REPO}:${TAG}}"
-SONGFORMER_CONFIG_PATH="${SONGFORMER_CONFIG_PATH:-/app/config/songformer_hr_tune.yaml}"
-SONGFORMER_TRAIN_SCRIPT="${SONGFORMER_TRAIN_SCRIPT:-/app/src/train_custom.py}"
 JOB_NAME="${JOB_NAME:-edmformer-gpu-$(date +%Y%m%d-%H%M)}"
 PUSH_LATEST="${PUSH_LATEST:-1}"
 USE_LATEST="${USE_LATEST:-1}"
@@ -121,61 +119,6 @@ else
   sed -i '' -E "s|^([[:space:]]*imageUri:).*|\\1 ${JOB_IMAGE_URI}|" "${JOB_CONFIG}"
 fi
 
-if [[ -n "${SONGFORMER_CONFIG_PATH}" || -n "${SONGFORMER_TRAIN_SCRIPT}" ]]; then
-  JOB_CONFIG="${JOB_CONFIG}" \
-  SONGFORMER_CONFIG_PATH="${SONGFORMER_CONFIG_PATH}" \
-  SONGFORMER_TRAIN_SCRIPT="${SONGFORMER_TRAIN_SCRIPT}" \
-  "${PYTHON_BIN}" - <<'PY'
-import os
-import sys
-from pathlib import Path
-
-try:
-    import yaml
-except Exception as exc:
-    print("Warning: PyYAML not available; skipping env patch in job config.", file=sys.stderr)
-    sys.exit(0)
-
-job_config = Path(os.environ["JOB_CONFIG"])
-data = yaml.safe_load(job_config.read_text(encoding="utf-8")) or {}
-
-def _get_specs(root):
-    if isinstance(root, dict):
-        job_spec = root.get("jobSpec")
-        if isinstance(job_spec, dict):
-            specs = job_spec.get("workerPoolSpecs")
-            if isinstance(specs, list):
-                return specs
-        specs = root.get("workerPoolSpecs")
-        if isinstance(specs, list):
-            return specs
-    return []
-
-def _set_env(spec, name, value):
-    if not value:
-        return
-    container = spec.setdefault("containerSpec", {})
-    envs = container.setdefault("env", [])
-    if envs is None:
-        envs = []
-        container["env"] = envs
-    for item in envs:
-        if item.get("name") == name:
-            item["value"] = value
-            return
-    envs.append({"name": name, "value": value})
-
-specs = _get_specs(data)
-if not specs:
-    print("Warning: no workerPoolSpecs found in job config; skipping env patch.", file=sys.stderr)
-else:
-    for spec in specs:
-        _set_env(spec, "SONGFORMER_CONFIG_PATH", os.environ.get("SONGFORMER_CONFIG_PATH"))
-        _set_env(spec, "SONGFORMER_TRAIN_SCRIPT", os.environ.get("SONGFORMER_TRAIN_SCRIPT"))
-    job_config.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
-    print(f"Updated env in {job_config}")
-PY
-fi
 
 echo "Submitting job: ${JOB_NAME}"
 gcloud ai custom-jobs create \

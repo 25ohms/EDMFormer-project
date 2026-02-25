@@ -93,7 +93,6 @@ if [[ "${PUSH_LATEST}" == "1" ]]; then
 fi
 
 echo "Running DDP smoke test on latest..."
-SONGFORMER_CONFIG_PATH="${SONGFORMER_CONFIG_PATH:-/app/config/songformer_hr_tune.yaml}" \
-SONGFORMER_TRAIN_SCRIPT="${SONGFORMER_TRAIN_SCRIPT:-/app/src/train_custom.py}" \
-CONFIG_PATH="${CONFIG_PATH:-${SONGFORMER_CONFIG_PATH}}" \
+CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}" \
+VERIFY_TRAIN_SCRIPT="${VERIFY_TRAIN_SCRIPT:-1}" \
 USE_LATEST=1 PULL_IMAGE=1 ./smoke_ddp_train.sh
