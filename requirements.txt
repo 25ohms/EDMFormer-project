@@ -2,3 +2,4 @@ google-cloud-storage
 kfp
 gspread
 pyyaml
+encodec
