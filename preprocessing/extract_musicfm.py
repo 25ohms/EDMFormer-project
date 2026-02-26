@@ -438,23 +438,23 @@ def main() -> None:
 
         # 30s embeddings wrapped into 420s windows
         wrap_subdir = "musicfm_30s"
-        for wrap_start in range(0, 10000, WRAP_SIZE):
-            if wrap_start * TARGET_SAMPLE_RATE >= waveform.numel():
-                break
+        for wrap_start, segment in segment_audio_with_padding(
+            waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
+        ):
             out_blob = f"{args.output_root.rstrip('/')}/{wrap_subdir}/{audio_id}_{wrap_start}.npy"
             if args.skip_existing and gcs_blob_exists(bucket, out_blob):
                 print(f"Skip existing gs://{args.bucket}/{out_blob}")
                 continue
             layer_embeds: list[np.ndarray] = []
             for j in range(0, WRAP_SIZE, HOP_SIZE):
-                start_idx = (wrap_start + j) * TARGET_SAMPLE_RATE
+                start_idx = j * TARGET_SAMPLE_RATE
                 end_idx = min(
-                    (wrap_start + j + WIN_SIZE) * TARGET_SAMPLE_RATE,
-                    waveform.numel(),
+                    (j + WIN_SIZE) * TARGET_SAMPLE_RATE,
+                    segment.numel(),
                 )
-                if start_idx >= waveform.numel():
+                if start_idx >= segment.numel():
                     break
-                audio_seg = waveform[start_idx:end_idx]
+                audio_seg = segment[start_idx:end_idx]
                 if audio_seg.numel() < 1025:
                     break
                 embedding = extract_musicfm_embedding(

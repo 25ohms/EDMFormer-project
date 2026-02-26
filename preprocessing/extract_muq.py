@@ -25,6 +25,7 @@ WIN_SIZE = 30
 HOP_SIZE = 30
 WRAP_SIZE = 420
 TARGET_SAMPLE_RATE = 24000
+MUQ_TARGET_FPS = 25.0
 
 
 def normalize_gcs_uri(uri: str) -> str:
@@ -162,6 +163,29 @@ def segment_audio_with_padding(
             segment = padded
         segments.append((start // sample_rate, segment))
     return segments
+
+
+def resample_embedding_time(embedding: np.ndarray, target_frames: int) -> np.ndarray:
+    if embedding.ndim == 3:
+        # Expect (1, T, C)
+        if embedding.shape[1] == target_frames:
+            return embedding
+        x = torch.from_numpy(embedding).float().permute(0, 2, 1)
+        x = torch.nn.functional.interpolate(
+            x, size=target_frames, mode="linear", align_corners=False
+        )
+        x = x.permute(0, 2, 1)
+        return x.cpu().numpy()
+    if embedding.ndim == 2:
+        if embedding.shape[0] == target_frames:
+            return embedding
+        x = torch.from_numpy(embedding).float().transpose(0, 1).unsqueeze(0)
+        x = torch.nn.functional.interpolate(
+            x, size=target_frames, mode="linear", align_corners=False
+        )
+        x = x.squeeze(0).transpose(0, 1)
+        return x.cpu().numpy()
+    raise ValueError(f"Unexpected embedding shape {embedding.shape}")
 
 
 def maybe_empty_cuda_cache(device: str) -> None:
@@ -389,9 +413,10 @@ def main() -> None:
 
         # 30s embeddings wrapped into 420s windows
         wrap_subdir = "muq_30s"
-        for wrap_start in range(0, 10000, WRAP_SIZE):
-            if wrap_start * TARGET_SAMPLE_RATE >= waveform.numel():
-                break
+        target_frames = int(round(WIN_SIZE * MUQ_TARGET_FPS))
+        for wrap_start, segment in segment_audio_with_padding(
+            waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
+        ):
             out_blob = (
                 f"{args.output_root.rstrip('/')}/{wrap_subdir}/{audio_id}_{wrap_start}.npy"
             )
@@ -400,18 +425,19 @@ def main() -> None:
                 continue
             layer_embeds: list[np.ndarray] = []
             for j in range(0, WRAP_SIZE, HOP_SIZE):
-                start_idx = (wrap_start + j) * TARGET_SAMPLE_RATE
+                start_idx = j * TARGET_SAMPLE_RATE
                 end_idx = min(
-                    (wrap_start + j + WIN_SIZE) * TARGET_SAMPLE_RATE, waveform.numel()
+                    (j + WIN_SIZE) * TARGET_SAMPLE_RATE, segment.numel()
                 )
-                if start_idx >= waveform.numel():
+                if start_idx >= segment.numel():
                     break
-                audio_seg = waveform[start_idx:end_idx]
+                audio_seg = segment[start_idx:end_idx]
                 if audio_seg.numel() < 1025:
                     break
                 embedding = extract_muq_embedding(muq, audio_seg, device, layer_ix=10)
                 if embedding is None:
                     break
+                embedding = resample_embedding_time(embedding, target_frames)
                 layer_embeds.append(embedding)
 
             if not layer_embeds:
@@ -423,6 +449,7 @@ def main() -> None:
 
         # 420s embeddings (single window)
         full_subdir = "muq_420s"
+        target_frames = int(round(WIN_SIZE * MUQ_TARGET_FPS))
         for start_sec, segment in segment_audio_with_padding(
             waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
         ):
@@ -444,6 +471,7 @@ def main() -> None:
                 embedding = extract_muq_embedding(muq, audio_seg, device, layer_ix=10)
                 if embedding is None:
                     break
+                embedding = resample_embedding_time(embedding, target_frames)
                 layer_embeds.append(embedding)
 
             if not layer_embeds:
