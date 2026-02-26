@@ -227,7 +227,7 @@ except Exception as exc:
     print('PyYAML missing; cannot verify config', file=sys.stderr)
     raise
 
-config_path = Path("${CONFIG_PATH}")
+config_path = Path(os.environ.get("CONFIG_PATH", ""))
 train_path = Path('/app/third_party/EDMFormer/src/SongFormer/train/train.py')
 
 if not train_path.exists():
