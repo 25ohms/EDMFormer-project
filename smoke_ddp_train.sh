@@ -219,6 +219,7 @@ COMMAND=$(cat <<'BASH'
 set -e
 if [[ "${VERIFY_TRAIN_SCRIPT}" == "1" ]]; then
   python - <<'PY'
+import os
 import sys
 from pathlib import Path
 try:
