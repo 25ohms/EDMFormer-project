@@ -150,6 +150,25 @@ def segment_audio(
     return segments
 
 
+def segment_audio_with_padding(
+    waveform: torch.Tensor, segment_seconds: int, sample_rate: int
+) -> Iterable[Tuple[int, torch.Tensor]]:
+    segment_len = segment_seconds * sample_rate
+    if waveform.numel() == 0:
+        return []
+    max_start = ((waveform.numel() - 1) // segment_len) * segment_len
+    segments = []
+    for start in range(0, max_start + 1, segment_len):
+        end = start + segment_len
+        segment = waveform[start:end]
+        if segment.numel() < segment_len:
+            padded = torch.zeros(segment_len, dtype=waveform.dtype)
+            padded[: segment.numel()] = segment
+            segment = padded
+        segments.append((start // sample_rate, segment))
+    return segments
+
+
 def maybe_empty_cuda_cache(device: str) -> None:
     if device.startswith("cuda") and torch.cuda.is_available():
         torch.cuda.empty_cache()
@@ -458,7 +477,7 @@ def main() -> None:
 
         # 420s embeddings (single window)
         full_subdir = "musicfm_420s"
-        for start_sec, segment in segment_audio(
+        for start_sec, segment in segment_audio_with_padding(
             waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
         ):
             out_blob = (
