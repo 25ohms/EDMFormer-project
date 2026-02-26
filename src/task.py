@@ -164,6 +164,7 @@ def _apply_config_overrides(config_path: Path) -> None:
     for key in (
         "ACCUMULATION_STEPS",
         "EARLY_STOPPING_STEP",
+        "DATALOADER_BATCH_SIZE",
         "DATALOADER_NUM_WORKERS",
         "DATALOADER_PREFETCH_FACTOR",
         "DATALOADER_PERSISTENT_WORKERS",
@@ -184,6 +185,11 @@ def _apply_config_overrides(config_path: Path) -> None:
         data["early_stopping_step"] = int(overrides["EARLY_STOPPING_STEP"])
         print(f"Override: early_stopping_step={data['early_stopping_step']}")
 
+    batch_size_override = (
+        int(overrides["DATALOADER_BATCH_SIZE"])
+        if "DATALOADER_BATCH_SIZE" in overrides
+        else None
+    )
     num_workers_override = (
         int(overrides["DATALOADER_NUM_WORKERS"])
         if "DATALOADER_NUM_WORKERS" in overrides
@@ -207,6 +213,9 @@ def _apply_config_overrides(config_path: Path) -> None:
     for section in ("train_dataloader", "eval_dataloader"):
         if section not in data or data[section] is None:
             data[section] = {}
+
+        if batch_size_override is not None and section == "train_dataloader":
+            data[section]["batch_size"] = batch_size_override
 
         if num_workers_override is not None:
             data[section]["num_workers"] = num_workers_override
