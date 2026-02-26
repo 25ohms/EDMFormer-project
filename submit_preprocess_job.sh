@@ -189,8 +189,17 @@ for env_key in HF_TOKEN MUQ_MODEL_NAME MUQ_GCS_PREFIX MUSICFM_STAT_PATH MUSICFM_
   fi
 done
 
+DOCKER_VOLUME_ARGS=()
+if [[ "${ID_ARGS}" == --split-ids* ]]; then
+  SPLIT_PATH="${ID_ARGS#--split-ids }"
+  if [[ "${SPLIT_PATH}" != gs://* && -f "${SPLIT_PATH}" ]]; then
+    DOCKER_VOLUME_ARGS+=("-v" "${SPLIT_PATH}:${SPLIT_PATH}:ro")
+  fi
+fi
+
 echo "Running preprocessing locally on this VM..."
 docker run --rm --gpus all \
+  "${DOCKER_VOLUME_ARGS[@]}" \
   "${DOCKER_ENV_ARGS[@]}" \
   "${IMAGE_URI}" \
   /bin/bash -c "${CMD}"
