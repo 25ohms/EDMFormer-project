@@ -148,7 +148,13 @@ def main() -> None:
         )
 
     # Patch 4: ensure all ranks skip batches consistently in the training loop only.
-    if "skip_batch = torch.tensor(1, device=device)" not in text:
+    # If the repo already includes a synchronized skip, leave it untouched.
+    if (
+        "Skipping batch because at least one rank received an invalid batch."
+        not in text
+        and "skip_batch = torch.tensor(1, device=device)" not in text
+        and "skip_flag = torch.tensor(1 if batch is None else 0" not in text
+    ):
         lines = text.splitlines()
         target_idx = None
         for i, line in enumerate(lines):
@@ -160,27 +166,28 @@ def main() -> None:
                         break
                 break
         if target_idx is None:
-            raise SystemExit(
-                "Patch failed: expected training-loop 'if batch is None:' line not found in train.py. "
-                "The upstream file may have changed."
+            print(
+                "Patch warning: training-loop 'if batch is None:' line not found; "
+                "skip-batch patch not applied."
             )
-        if target_idx + 1 >= len(lines) or lines[target_idx + 1].strip() != "continue":
-            raise SystemExit(
-                "Patch failed: expected 'continue' after 'if batch is None:' in training loop. "
-                "The upstream file may have changed."
-            )
+        else:
+            if target_idx + 1 >= len(lines) or lines[target_idx + 1].strip() != "continue":
+                raise SystemExit(
+                    "Patch failed: expected 'continue' after 'if batch is None:' in training loop. "
+                    "The upstream file may have changed."
+                )
 
-        indent = lines[target_idx].split("if batch is None:")[0]
-        replacement = [
-            f"{indent}if batch is None:",
-            f"{indent}    skip_batch = torch.tensor(1, device=device)",
-            f"{indent}else:",
-            f"{indent}    skip_batch = torch.tensor(0, device=device)",
-            f"{indent}if accelerator.gather(skip_batch).max().item() > 0:",
-            f"{indent}    continue",
-        ]
-        lines[target_idx : target_idx + 2] = replacement
-        text = "\n".join(lines) + "\n"
+            indent = lines[target_idx].split("if batch is None:")[0]
+            replacement = [
+                f"{indent}if batch is None:",
+                f"{indent}    skip_batch = torch.tensor(1, device=device)",
+                f"{indent}else:",
+                f"{indent}    skip_batch = torch.tensor(0, device=device)",
+                f"{indent}if accelerator.gather(skip_batch).max().item() > 0:",
+                f"{indent}    continue",
+            ]
+            lines[target_idx : target_idx + 2] = replacement
+            text = "\n".join(lines) + "\n"
 
     # Patch 5: synchronize early stopping across ranks to avoid collective mismatch.
     if "stop_flag = accelerator.gather(should_stop).max().item()" not in text:
