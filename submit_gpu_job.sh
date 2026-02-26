@@ -119,7 +119,6 @@ else
   sed -i '' -E "s|^([[:space:]]*imageUri:).*|\\1 ${JOB_IMAGE_URI}|" "${JOB_CONFIG}"
 fi
 
-
 echo "Submitting job: ${JOB_NAME}"
 gcloud ai custom-jobs create \
   --region="${REGION}" \

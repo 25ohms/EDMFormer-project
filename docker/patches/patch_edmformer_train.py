@@ -249,7 +249,6 @@ def main() -> None:
                         f"{indent}if accelerator.sync_gradients and global_step % args.eval_interval == 0:",
                         f"{indent}    stop_flag = accelerator.gather(should_stop).max().item()",
                         f"{indent}    if stop_flag > 0:",
-                        f"{indent}        no_improve_steps = early_stop_patience",
                         f"{indent}        accelerator.print(\"Early stop broadcast received\")",
                         f"{indent}        break",
                     ]

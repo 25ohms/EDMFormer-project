@@ -6,7 +6,6 @@ IAM Roles: roles/aiplatform.user, roles/storage.objectViewer
 
 import argparse
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
@@ -83,88 +82,11 @@ def _is_truthy(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
-def _maybe_autoincrement_checkpoint_dir(
-    client: storage.Client, checkpoint_gcs: str
-) -> str:
-    if not _is_truthy(os.environ.get("AUTO_INCREMENT_RUN")):
-        return checkpoint_gcs
-    bucket_name, prefix = parse_gcs_uri(checkpoint_gcs)
-    prefix = prefix.rstrip("/")
-    if "/" in prefix:
-        parent, name = prefix.rsplit("/", 1)
-        parent_prefix = f"{parent}/"
-    else:
-        parent = ""
-        name = prefix
-        parent_prefix = ""
-    match = re.match(r"^(.*?)(\d+)$", name)
-    if not match:
-        print(
-            "AUTO_INCREMENT_RUN is set but checkpoint dir does not end with digits; "
-            "leaving as-is."
-        )
-        return checkpoint_gcs
-    base = match.group(1)
-    current_num = int(match.group(2))
-
-    bucket = client.bucket(bucket_name)
-    search_prefix = f"{parent_prefix}{base}"
-    pattern = re.compile(
-        rf"^{re.escape(parent_prefix)}{re.escape(base)}(\d+)(/|$)"
-    )
-    max_existing = None
-    for blob in bucket.list_blobs(prefix=search_prefix):
-        m = pattern.match(blob.name)
-        if not m:
-            continue
-        num = int(m.group(1))
-        if max_existing is None or num > max_existing:
-            max_existing = num
-
-    if max_existing is None:
-        next_num = current_num
-    else:
-        next_num = max(max_existing, current_num) + 1
-
-    if next_num == current_num:
-        return checkpoint_gcs
-
-    new_prefix = f"{parent_prefix}{base}{next_num}"
-    new_gcs = f"gs://{bucket_name}/{new_prefix}"
-    print(f"Auto-increment checkpoint dir: {checkpoint_gcs} -> {new_gcs}")
-    return new_gcs
-
-
-def _build_wandb_notes(config: dict, args: argparse.Namespace) -> str:
-    details: list[str] = []
-    lr = config.get("warmup_max_lr") or config.get("optimizer", {}).get("lr")
-    if isinstance(lr, str) and lr.startswith("${") and "warmup_max_lr" in config:
-        lr = config["warmup_max_lr"]
-    if lr is not None:
-        details.append(f"lr={lr}")
-    total_steps = config.get("total_steps")
-    if total_steps is not None:
-        details.append(f"total_steps={total_steps}")
-    warmup_steps = config.get("warmup_steps")
-    if warmup_steps is not None:
-        details.append(f"warmup_steps={warmup_steps}")
-    batch_size = config.get("train_dataloader", {}).get("batch_size")
-    if batch_size is not None:
-        details.append(f"batch_size={batch_size}")
-    accumulation_steps = config.get("accumulation_steps")
-    if accumulation_steps is not None:
-        details.append(f"accumulation_steps={accumulation_steps}")
-    if args.num_gpus is not None:
-        details.append(f"num_gpus={args.num_gpus}")
-    return ", ".join(details)
-
-
 def _apply_config_overrides(config_path: Path) -> None:
     overrides: dict[str, str] = {}
     for key in (
         "ACCUMULATION_STEPS",
         "EARLY_STOPPING_STEP",
-        "DATALOADER_BATCH_SIZE",
         "DATALOADER_NUM_WORKERS",
         "DATALOADER_PREFETCH_FACTOR",
         "DATALOADER_PERSISTENT_WORKERS",
@@ -185,11 +107,6 @@ def _apply_config_overrides(config_path: Path) -> None:
         data["early_stopping_step"] = int(overrides["EARLY_STOPPING_STEP"])
         print(f"Override: early_stopping_step={data['early_stopping_step']}")
 
-    batch_size_override = (
-        int(overrides["DATALOADER_BATCH_SIZE"])
-        if "DATALOADER_BATCH_SIZE" in overrides
-        else None
-    )
     num_workers_override = (
         int(overrides["DATALOADER_NUM_WORKERS"])
         if "DATALOADER_NUM_WORKERS" in overrides
@@ -213,9 +130,6 @@ def _apply_config_overrides(config_path: Path) -> None:
     for section in ("train_dataloader", "eval_dataloader"):
         if section not in data or data[section] is None:
             data[section] = {}
-
-        if batch_size_override is not None and section == "train_dataloader":
-            data[section]["batch_size"] = batch_size_override
 
         if num_workers_override is not None:
             data[section]["num_workers"] = num_workers_override
@@ -384,7 +298,6 @@ def main() -> None:
         dataset_type=args.dataset_type,
     )
     _apply_config_overrides(config_path)
-    config_data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
 
     train_args = list(args.train_args)
     train_args = ensure_arg(train_args, "--config", str(config_path))
@@ -397,29 +310,20 @@ def main() -> None:
     checkpoint_gcs = None
     if args.checkpoint_dir:
         if args.checkpoint_dir.startswith("gs://"):
-            checkpoint_gcs = _maybe_autoincrement_checkpoint_dir(
-                client, args.checkpoint_dir
-            )
-            _, prefix = parse_gcs_uri(checkpoint_gcs)
+            checkpoint_gcs = args.checkpoint_dir
+            _, prefix = parse_gcs_uri(args.checkpoint_dir)
             checkpoint_local = (
                 local_root / "checkpoints" / Path(prefix.rstrip("/")).name
             )
             if not checkpoint_local.exists():
                 checkpoint_local.mkdir(parents=True, exist_ok=True)
-            download_gcs_prefix(client, checkpoint_gcs, checkpoint_local)
+            download_gcs_prefix(client, args.checkpoint_dir, checkpoint_local)
             local_checkpoint_dir = checkpoint_local
         else:
             local_checkpoint_dir = Path(args.checkpoint_dir)
 
     if local_checkpoint_dir is not None:
         train_args = ensure_arg(train_args, "--checkpoint_dir", str(local_checkpoint_dir))
-
-    run_name = os.environ.get("RUN_NAME") or os.environ.get("WANDB_NAME")
-    if run_name is None and checkpoint_gcs:
-        _, prefix = parse_gcs_uri(checkpoint_gcs)
-        run_name = Path(prefix.rstrip("/")).name
-    if run_name:
-        train_args = ensure_arg(train_args, "--run_name", run_name)
 
     repo_root = Path(__file__).resolve().parents[1]
     train_script = Path(args.train_script).resolve()
@@ -463,14 +367,6 @@ def main() -> None:
     # If no W&B key is provided, default to disabled to avoid no-tty failures.
     if not env.get("WANDB_API_KEY") and not _is_truthy(env.get("WANDB_FORCE_ENABLE")):
         env.setdefault("WANDB_DISABLED", "true")
-    if run_name and "WANDB_NAME" not in env:
-        env["WANDB_NAME"] = run_name
-    if _is_truthy(env.get("WANDB_AUTO_NOTES")) and not env.get("WANDB_NOTES"):
-        notes = _build_wandb_notes(config_data, args)
-        if notes:
-            env["WANDB_NOTES"] = notes
-    if env.get("RUN_TAGS") and "WANDB_TAGS" not in env:
-        env["WANDB_TAGS"] = env["RUN_TAGS"]
 
     cmd = [sys.executable, str(train_script)] + train_args
     if train_backend == "GPU" and args.num_gpus > 1:

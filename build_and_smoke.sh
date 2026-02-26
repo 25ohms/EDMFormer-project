@@ -93,6 +93,4 @@ if [[ "${PUSH_LATEST}" == "1" ]]; then
 fi
 
 echo "Running DDP smoke test on latest..."
-CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}" \
-VERIFY_TRAIN_SCRIPT="${VERIFY_TRAIN_SCRIPT:-1}" \
 USE_LATEST=1 PULL_IMAGE=1 ./smoke_ddp_train.sh
