@@ -8,6 +8,7 @@ import argparse
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from google.cloud import storage
@@ -82,11 +83,53 @@ def _is_truthy(value: str | None) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
+def _default_checkpoint_run_id() -> str:
+    explicit = (
+        os.environ.get("CHECKPOINT_RUN_ID") or os.environ.get("RUN_ID") or ""
+    ).strip()
+    if explicit:
+        return explicit
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"edmformer-{timestamp}"
+
+
+def _resolve_checkpoint_dir(checkpoint_dir: str | None) -> str | None:
+    if not checkpoint_dir:
+        return checkpoint_dir
+    run_id = _default_checkpoint_run_id()
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    resolved = checkpoint_dir
+    for placeholder, value in (
+        ("{run_id}", run_id),
+        ("<RUN_ID>", run_id),
+        ("{timestamp}", timestamp),
+        ("<TIMESTAMP>", timestamp),
+    ):
+        if placeholder in resolved:
+            resolved = resolved.replace(placeholder, value)
+    if resolved.endswith("/checkpoints") or resolved.endswith("/checkpoints/"):
+        resolved = resolved.rstrip("/") + f"/{run_id}"
+    return resolved
+
+
 def _apply_config_overrides(config_path: Path) -> None:
     overrides: dict[str, str] = {}
     for key in (
         "ACCUMULATION_STEPS",
         "EARLY_STOPPING_STEP",
+        "WARMUP_MAX_LR",
+        "WARMUP_STEPS",
+        "TOTAL_STEPS",
+        "MAX_STEPS",
+        "WEIGHT_DECAY",
+        "TRAIN_BATCH_SIZE",
+        "EVAL_BATCH_SIZE",
+        "LABEL_FOCAL_LOSS_WEIGHT",
+        "BOUNDARY_TVLOSS_WEIGHT",
+        "LOSS_WEIGHT_SECTION",
+        "LOSS_WEIGHT_FUNCTION",
+        "LOCAL_MAXIMA_FILTER_SIZE",
+        "NUM_NEIGHBORS",
         "DATALOADER_NUM_WORKERS",
         "DATALOADER_PREFETCH_FACTOR",
         "DATALOADER_PERSISTENT_WORKERS",
@@ -106,6 +149,68 @@ def _apply_config_overrides(config_path: Path) -> None:
     if "EARLY_STOPPING_STEP" in overrides:
         data["early_stopping_step"] = int(overrides["EARLY_STOPPING_STEP"])
         print(f"Override: early_stopping_step={data['early_stopping_step']}")
+
+    if "WARMUP_MAX_LR" in overrides:
+        data["warmup_max_lr"] = float(overrides["WARMUP_MAX_LR"])
+        print(f"Override: warmup_max_lr={data['warmup_max_lr']}")
+    if "WARMUP_STEPS" in overrides:
+        data["warmup_steps"] = int(overrides["WARMUP_STEPS"])
+        print(f"Override: warmup_steps={data['warmup_steps']}")
+    if "TOTAL_STEPS" in overrides:
+        data["total_steps"] = int(overrides["TOTAL_STEPS"])
+        print(f"Override: total_steps={data['total_steps']}")
+    if "MAX_STEPS" in overrides:
+        if "args" not in data or data["args"] is None:
+            data["args"] = {}
+        data["args"]["max_steps"] = int(overrides["MAX_STEPS"])
+        print(f"Override: max_steps={data['args']['max_steps']}")
+    if "WEIGHT_DECAY" in overrides:
+        if "optimizer" not in data or data["optimizer"] is None:
+            data["optimizer"] = {}
+        data["optimizer"]["weight_decay"] = float(overrides["WEIGHT_DECAY"])
+        print(f"Override: weight_decay={data['optimizer']['weight_decay']}")
+
+    if "TRAIN_BATCH_SIZE" in overrides:
+        if "train_dataloader" not in data or data["train_dataloader"] is None:
+            data["train_dataloader"] = {}
+        data["train_dataloader"]["batch_size"] = int(overrides["TRAIN_BATCH_SIZE"])
+        print(
+            f"Override: train_dataloader.batch_size={data['train_dataloader']['batch_size']}"
+        )
+    if "EVAL_BATCH_SIZE" in overrides:
+        if "eval_dataloader" not in data or data["eval_dataloader"] is None:
+            data["eval_dataloader"] = {}
+        data["eval_dataloader"]["batch_size"] = int(overrides["EVAL_BATCH_SIZE"])
+        print(
+            f"Override: eval_dataloader.batch_size={data['eval_dataloader']['batch_size']}"
+        )
+
+    if "LABEL_FOCAL_LOSS_WEIGHT" in overrides:
+        data["label_focal_loss_weight"] = float(
+            overrides["LABEL_FOCAL_LOSS_WEIGHT"]
+        )
+        print(f"Override: label_focal_loss_weight={data['label_focal_loss_weight']}")
+    if "BOUNDARY_TVLOSS_WEIGHT" in overrides:
+        data["boundary_tvloss_weight"] = float(
+            overrides["BOUNDARY_TVLOSS_WEIGHT"]
+        )
+        print(f"Override: boundary_tvloss_weight={data['boundary_tvloss_weight']}")
+    if "LOSS_WEIGHT_SECTION" in overrides:
+        data["loss_weight_section"] = float(overrides["LOSS_WEIGHT_SECTION"])
+        print(f"Override: loss_weight_section={data['loss_weight_section']}")
+    if "LOSS_WEIGHT_FUNCTION" in overrides:
+        data["loss_weight_function"] = float(overrides["LOSS_WEIGHT_FUNCTION"])
+        print(f"Override: loss_weight_function={data['loss_weight_function']}")
+    if "LOCAL_MAXIMA_FILTER_SIZE" in overrides:
+        data["local_maxima_filter_size"] = int(
+            overrides["LOCAL_MAXIMA_FILTER_SIZE"]
+        )
+        print(
+            f"Override: local_maxima_filter_size={data['local_maxima_filter_size']}"
+        )
+    if "NUM_NEIGHBORS" in overrides:
+        data["num_neighbors"] = int(overrides["NUM_NEIGHBORS"])
+        print(f"Override: num_neighbors={data['num_neighbors']}")
 
     num_workers_override = (
         int(overrides["DATALOADER_NUM_WORKERS"])
@@ -244,6 +349,7 @@ def main() -> None:
             "INPUT_EMBEDDING_DIR_GCS."
         )
 
+    args.checkpoint_dir = _resolve_checkpoint_dir(args.checkpoint_dir)
     if _has_flag(args.train_args, "--checkpoint_dir") and args.checkpoint_dir:
         raise SystemExit(
             "Provide checkpoint dir via --checkpoint-dir or --train-args --checkpoint_dir, not both."
