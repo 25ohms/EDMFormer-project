@@ -412,6 +412,13 @@ def main() -> None:
     if test_ids_path:
         train_args = ensure_arg(train_args, "--test-ids-path", test_ids_path)
 
+    cv_folds = os.environ.get("CV_FOLDS")
+    if cv_folds:
+        train_args = ensure_arg(train_args, "--cv_folds", str(cv_folds))
+    cv_seed = os.environ.get("CV_SEED")
+    if cv_seed:
+        train_args = ensure_arg(train_args, "--cv_seed", str(cv_seed))
+
     local_checkpoint_dir = None
     checkpoint_gcs = None
     if args.checkpoint_dir:
@@ -491,6 +498,16 @@ def main() -> None:
         subprocess.run(cmd, check=True, cwd=workdir, env=env)
     except subprocess.CalledProcessError as exc:
         run_error = exc
+    else:
+        if _is_truthy(os.environ.get("RUN_TEST_EVAL", "0")):
+            eval_cmd = [sys.executable, str(repo_root / "src" / "test.py")]
+            eval_cmd += ["--config", str(config_path)]
+            if local_checkpoint_dir is not None:
+                eval_cmd += ["--checkpoint-dir", str(local_checkpoint_dir)]
+            elif args.checkpoint_dir:
+                eval_cmd += ["--checkpoint-dir", str(args.checkpoint_dir)]
+            print(f"Running test evaluation: {' '.join(eval_cmd)}")
+            subprocess.run(eval_cmd, check=True, cwd=repo_root, env=env)
     finally:
         if checkpoint_gcs and local_checkpoint_dir is not None:
             try:
