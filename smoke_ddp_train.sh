@@ -119,6 +119,7 @@ CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/So
 NPROC="${NPROC:-}"
 MAX_STEPS="${MAX_STEPS:-1}"
 GPU_DEVICES="${GPU_DEVICES:-}"
+SINGLE_GPU="${SINGLE_GPU:-0}"
 USE_TASK_ENTRYPOINT="${USE_TASK_ENTRYPOINT:-1}"
 DOCKER_WORKDIR="/app/third_party/EDMFormer/src/SongFormer"
 if [[ "${USE_TASK_ENTRYPOINT}" == "1" ]]; then
@@ -134,6 +135,15 @@ DATALOADER_PIN_MEMORY="${DATALOADER_PIN_MEMORY:-}"
 HOST_GPU_COUNT=0
 if command -v nvidia-smi >/dev/null 2>&1; then
   HOST_GPU_COUNT=$(nvidia-smi -L 2>/dev/null | wc -l | tr -d ' ')
+fi
+
+if [[ "${SINGLE_GPU}" == "1" ]]; then
+  if [[ -z "${GPU_DEVICES}" ]]; then
+    GPU_DEVICES="0"
+  fi
+  if [[ -z "${NPROC}" ]]; then
+    NPROC="1"
+  fi
 fi
 
 GPU_LIST=()

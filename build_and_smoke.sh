@@ -87,10 +87,11 @@ echo "Pushing image: ${IMAGE_URI}"
 docker push "${IMAGE_URI}"
 
 if [[ "${PUSH_LATEST}" == "1" ]]; then
-  echo "Tagging and pushing latest..."
+echo "Tagging and pushing latest..."
   docker tag "${IMAGE_URI}" "${IMAGE_REPO}:latest"
   docker push "${IMAGE_REPO}:latest"
 fi
 
-echo "Running DDP smoke test on latest..."
-USE_LATEST=1 PULL_IMAGE=1 ./smoke_ddp_train.sh
+SINGLE_GPU="${SINGLE_GPU:-0}"
+echo "Running DDP smoke test on latest (single GPU: ${SINGLE_GPU})..."
+USE_LATEST=1 PULL_IMAGE=1 SINGLE_GPU="${SINGLE_GPU}" ./smoke_ddp_train.sh
