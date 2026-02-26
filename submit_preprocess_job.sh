@@ -109,35 +109,26 @@ fi
 OUTPUT_ROOT="${OUTPUT_ROOT:-embeddings}"
 
 ID_ARGS=""
+ID_ARGS_FROM_ENV=0
 if [[ -n "${SPLIT_IDS_GCS:-}" ]]; then
   ID_ARGS="--split-ids ${SPLIT_IDS_GCS}"
+  ID_ARGS_FROM_ENV=1
 elif [[ -n "${LABELS_JSONL_GCS:-}" ]]; then
   ID_ARGS="--labels-jsonl ${LABELS_JSONL_GCS}"
-else
-  echo "Missing LABELS_JSONL_GCS or SPLIT_IDS_GCS for preprocessing." >&2
-  exit 1
+  ID_ARGS_FROM_ENV=1
 fi
 
-WIPE_OUTPUT="${WIPE_OUTPUT:-0}"
-WIPE_FLAG=""
-if [[ "${WIPE_OUTPUT}" == "1" || "${WIPE_OUTPUT}" == "true" || "${WIPE_OUTPUT}" == "yes" ]]; then
-  WIPE_FLAG="--wipe-output"
-fi
-
-SKIP_EXISTING="${SKIP_EXISTING:-1}"
-SKIP_FLAG=""
-if [[ "${SKIP_EXISTING}" == "1" || "${SKIP_EXISTING}" == "true" || "${SKIP_EXISTING}" == "yes" ]]; then
-  SKIP_FLAG="--skip-existing"
-fi
-
-# If dataset audit reports exist locally, prefer regenerating only missing IDs.
+USE_AUDIT_MISSING="${USE_AUDIT_MISSING:-1}"
+FORCE_AUDIT="${FORCE_AUDIT:-0}"
 AUDIT_REPORTS="${AUDIT_REPORTS:-reports/dataset_audit_*.jsonl}"
-if compgen -G "${AUDIT_REPORTS}" > /dev/null; then
-  MISSING_IDS_FILE="$("${PYTHON_BIN}" - <<'PY'
+
+if [[ "${USE_AUDIT_MISSING}" == "1" || "${USE_AUDIT_MISSING}" == "true" || "${USE_AUDIT_MISSING}" == "yes" ]]; then
+  if [[ "${FORCE_AUDIT}" == "1" || "${FORCE_AUDIT}" == "true" || "${FORCE_AUDIT}" == "yes" || "${ID_ARGS_FROM_ENV}" -eq 0 ]]; then
+    if compgen -G "${AUDIT_REPORTS}" > /dev/null; then
+      MISSING_IDS_FILE="$("${PYTHON_BIN}" - <<'PY'
 import glob
 import json
 import os
-import sys
 
 pattern = os.environ.get("AUDIT_REPORTS", "reports/dataset_audit_*.jsonl")
 paths = sorted(glob.glob(pattern))
@@ -167,12 +158,32 @@ if missing:
 else:
     print("")
 PY
-  )"
-  if [[ -n "${MISSING_IDS_FILE}" && -s "${MISSING_IDS_FILE}" ]]; then
-    ID_ARGS="--split-ids ${MISSING_IDS_FILE}"
-    echo "Using missing IDs from audit reports: ${MISSING_IDS_FILE}"
+      )"
+      if [[ -n "${MISSING_IDS_FILE}" && -s "${MISSING_IDS_FILE}" ]]; then
+        ID_ARGS="--split-ids ${MISSING_IDS_FILE}"
+        echo "Using missing IDs from audit reports: ${MISSING_IDS_FILE}"
+      fi
+    fi
   fi
 fi
+
+if [[ -z "${ID_ARGS}" ]]; then
+  echo "Missing LABELS_JSONL_GCS or SPLIT_IDS_GCS for preprocessing." >&2
+  exit 1
+fi
+
+WIPE_OUTPUT="${WIPE_OUTPUT:-0}"
+WIPE_FLAG=""
+if [[ "${WIPE_OUTPUT}" == "1" || "${WIPE_OUTPUT}" == "true" || "${WIPE_OUTPUT}" == "yes" ]]; then
+  WIPE_FLAG="--wipe-output"
+fi
+
+SKIP_EXISTING="${SKIP_EXISTING:-1}"
+SKIP_FLAG=""
+if [[ "${SKIP_EXISTING}" == "1" || "${SKIP_EXISTING}" == "true" || "${SKIP_EXISTING}" == "yes" ]]; then
+  SKIP_FLAG="--skip-existing"
+fi
+
 
 echo "Using image: ${IMAGE_URI}"
 echo "Output root: ${OUTPUT_ROOT}"
