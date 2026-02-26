@@ -118,10 +118,60 @@ else
   exit 1
 fi
 
-WIPE_OUTPUT="${WIPE_OUTPUT:-1}"
+WIPE_OUTPUT="${WIPE_OUTPUT:-0}"
 WIPE_FLAG=""
 if [[ "${WIPE_OUTPUT}" == "1" || "${WIPE_OUTPUT}" == "true" || "${WIPE_OUTPUT}" == "yes" ]]; then
   WIPE_FLAG="--wipe-output"
+fi
+
+SKIP_EXISTING="${SKIP_EXISTING:-1}"
+SKIP_FLAG=""
+if [[ "${SKIP_EXISTING}" == "1" || "${SKIP_EXISTING}" == "true" || "${SKIP_EXISTING}" == "yes" ]]; then
+  SKIP_FLAG="--skip-existing"
+fi
+
+# If dataset audit reports exist locally, prefer regenerating only missing IDs.
+AUDIT_REPORTS="${AUDIT_REPORTS:-reports/dataset_audit_*.jsonl}"
+if compgen -G "${AUDIT_REPORTS}" > /dev/null; then
+  MISSING_IDS_FILE="$("${PYTHON_BIN}" - <<'PY'
+import glob
+import json
+import os
+import sys
+
+pattern = os.environ.get("AUDIT_REPORTS", "reports/dataset_audit_*.jsonl")
+paths = sorted(glob.glob(pattern))
+missing = set()
+for path in paths:
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            base_id = rec.get("base_id") or rec.get("id") or rec.get("stem")
+            if base_id is None:
+                continue
+            base_id = str(base_id).split("_", 1)[0]
+            missing.add(base_id)
+
+out_path = "/tmp/edmformer-missing-ids.txt"
+if missing:
+    with open(out_path, "w", encoding="utf-8") as f:
+        for item in sorted(missing):
+            f.write(f"{item}\n")
+    print(out_path)
+else:
+    print("")
+PY
+  )"
+  if [[ -n "${MISSING_IDS_FILE}" && -s "${MISSING_IDS_FILE}" ]]; then
+    ID_ARGS="--split-ids ${MISSING_IDS_FILE}"
+    echo "Using missing IDs from audit reports: ${MISSING_IDS_FILE}"
+  fi
 fi
 
 echo "Using image: ${IMAGE_URI}"
@@ -129,8 +179,8 @@ echo "Output root: ${OUTPUT_ROOT}"
 echo "Building preprocessing image..."
 docker build --no-cache -f "${DOCKERFILE}" -t "${IMAGE_URI}" .
 
-CMD="python preprocessing/extract_muq.py --bucket ${BUCKET_NAME} ${ID_ARGS} --output-root ${OUTPUT_ROOT} ${WIPE_FLAG} && \
-python preprocessing/extract_musicfm.py --bucket ${BUCKET_NAME} ${ID_ARGS} --output-root ${OUTPUT_ROOT} ${WIPE_FLAG}"
+CMD="python preprocessing/extract_muq.py --bucket ${BUCKET_NAME} ${ID_ARGS} --output-root ${OUTPUT_ROOT} ${WIPE_FLAG} ${SKIP_FLAG} && \
+python preprocessing/extract_musicfm.py --bucket ${BUCKET_NAME} ${ID_ARGS} --output-root ${OUTPUT_ROOT} ${WIPE_FLAG} ${SKIP_FLAG}"
 
 DOCKER_ENV_ARGS=()
 for env_key in HF_TOKEN MUQ_MODEL_NAME MUQ_GCS_PREFIX MUSICFM_STAT_PATH MUSICFM_MODEL_PATH MUSICFM_VARIANT MUSICFM_DEVICE MUQ_DEVICE; do
