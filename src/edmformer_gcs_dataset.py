@@ -265,7 +265,59 @@ class Dataset(Dataset):
             )
 
             if keep_boundarys.sum() <= 0:
-                return None
+                # No interior boundaries in this slice. Keep the slice by assigning
+                # a single label that spans [time_L, time_R].
+                prior_idx = np.flatnonzero(local_times <= time_L + self.EPS)
+                if len(prior_idx) == 0:
+                    return None
+                label_idx = int(prior_idx[-1])
+                label_id = int(local_labels[label_idx])
+                if label_id < 0:
+                    return None
+
+                mask = np.ones(
+                    [int(self.SLICE_DUR * self.output_logits_frame_rates)],
+                    dtype=bool,
+                )
+                mask[self.time2frame(time_L) : self.time2frame(time_R)] = False
+
+                true_boundary = np.zeros(
+                    [int(self.SLICE_DUR * self.output_logits_frame_rates)],
+                    dtype=float,
+                )
+                true_function = np.zeros(
+                    [
+                        int(self.SLICE_DUR * self.output_logits_frame_rates),
+                        self.hparams.num_classes,
+                    ],
+                    dtype=float,
+                )
+                true_function[
+                    self.time2frame(time_L) : self.time2frame(time_R),
+                    label_id,
+                ] = 1
+                true_function_list = [label_id]
+                msa_info = [
+                    (float(time_L), str(self.id_to_label[label_id])),
+                    (float(time_R), "end"),
+                ]
+
+                return {
+                    "data_id": internal_tmp_id + "_" + utt_id_with_start_sec,
+                    "input_embedding": input_embedding,
+                    "mask": mask,
+                    "true_boundary": true_boundary,
+                    "widen_true_boundary": self.widen_temporal_events(
+                        true_boundary, num_neighbors=self.hparams.num_neighbors
+                    ),
+                    "true_function": true_function,
+                    "true_function_list": true_function_list,
+                    "msa_info": msa_info,
+                    "dataset_id": self.dataset_id_to_dataset_id[dataset_label],
+                    "label_id_mask": self.dataset_id2label_mask[
+                        self.dataset_id_to_dataset_id[dataset_label]
+                    ],
+                }
 
             mask = np.ones(
                 [int(self.SLICE_DUR * self.output_logits_frame_rates)], dtype=bool

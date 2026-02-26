@@ -253,6 +253,10 @@ def delete_gcs_prefix(bucket: storage.Bucket, prefix: str) -> int:
     return len(blobs)
 
 
+def gcs_blob_exists(bucket: storage.Bucket, blob_name: str) -> bool:
+    return bucket.blob(blob_name).exists()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Extract MuQ embeddings (30s and 420s)")
     parser.add_argument("--bucket", required=True, help="GCS bucket name")
@@ -297,6 +301,11 @@ def main() -> None:
         "--wipe-output",
         action="store_true",
         help="Delete existing MuQ embeddings under the output root before writing.",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip writing embeddings that already exist in GCS.",
     )
     args = parser.parse_args()
 
@@ -364,6 +373,12 @@ def main() -> None:
         for wrap_start in range(0, 10000, WRAP_SIZE):
             if wrap_start * TARGET_SAMPLE_RATE >= waveform.numel():
                 break
+            out_blob = (
+                f"{args.output_root.rstrip('/')}/{wrap_subdir}/{audio_id}_{wrap_start}.npy"
+            )
+            if args.skip_existing and gcs_blob_exists(bucket, out_blob):
+                print(f"Skip existing gs://{args.bucket}/{out_blob}")
+                continue
             layer_embeds: list[np.ndarray] = []
             for j in range(0, WRAP_SIZE, HOP_SIZE):
                 start_idx = (wrap_start + j) * TARGET_SAMPLE_RATE
@@ -384,9 +399,6 @@ def main() -> None:
                 continue
 
             wrap_embedding = np.concatenate(layer_embeds, axis=1)
-            out_blob = (
-                f"{args.output_root.rstrip('/')}/{wrap_subdir}/{audio_id}_{wrap_start}.npy"
-            )
             upload_npy(client, args.bucket, out_blob, wrap_embedding)
             print(f"Wrote gs://{args.bucket}/{out_blob}")
 
@@ -395,6 +407,12 @@ def main() -> None:
         for start_sec, segment in segment_audio(
             waveform, WRAP_SIZE, TARGET_SAMPLE_RATE
         ):
+            out_blob = (
+                f"{args.output_root.rstrip('/')}/{full_subdir}/{audio_id}_{start_sec}.npy"
+            )
+            if args.skip_existing and gcs_blob_exists(bucket, out_blob):
+                print(f"Skip existing gs://{args.bucket}/{out_blob}")
+                continue
             if segment.numel() < 1025:
                 break
             layer_embeds: list[np.ndarray] = []
@@ -413,9 +431,6 @@ def main() -> None:
                 continue
 
             embedding = np.concatenate(layer_embeds, axis=1)
-            out_blob = (
-                f"{args.output_root.rstrip('/')}/{full_subdir}/{audio_id}_{start_sec}.npy"
-            )
             upload_npy(client, args.bucket, out_blob, embedding)
             print(f"Wrote gs://{args.bucket}/{out_blob}")
 
