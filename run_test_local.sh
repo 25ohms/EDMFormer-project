@@ -85,6 +85,7 @@ IMAGE_URI="${IMAGE_URI:-${IMAGE_REPO}:${TAG}}"
 PULL_IMAGE="${PULL_IMAGE:-1}"
 LOCAL_BUILD="${LOCAL_BUILD:-0}"
 LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-edmformer-train-local:dev}"
+LOCAL_DOCKERFILE="${LOCAL_DOCKERFILE:-docker/testing.Dockerfile}"
 GPU_DEVICES="${GPU_DEVICES:-0}"
 
 CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}"
@@ -102,7 +103,7 @@ fi
 
 if [[ "${LOCAL_BUILD}" == "1" ]]; then
   echo "Building local test image: ${LOCAL_IMAGE_TAG}"
-  docker build -f docker/training.Dockerfile -t "${LOCAL_IMAGE_TAG}" .
+  docker build -f "${LOCAL_DOCKERFILE}" -t "${LOCAL_IMAGE_TAG}" .
   IMAGE_URI="${LOCAL_IMAGE_TAG}"
 else
   if [[ "${PULL_IMAGE}" == "1" ]]; then
