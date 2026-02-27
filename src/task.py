@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from google.cloud import storage
+from huggingface_hub import hf_hub_download
 
 from config_generator import update_config
 import yaml
@@ -110,6 +111,48 @@ def _resolve_checkpoint_dir(checkpoint_dir: str | None) -> str | None:
     if resolved.endswith("/checkpoints") or resolved.endswith("/checkpoints/"):
         resolved = resolved.rstrip("/") + f"/{run_id}"
     return resolved
+
+
+def _resolve_pretrained_ckpt(
+    local_root: Path, client: storage.Client
+) -> Path | None:
+    ckpt_uri = os.environ.get("PRETRAINED_CKPT", "").strip()
+    hf_repo = os.environ.get("PRETRAINED_HF_REPO", "").strip()
+    hf_filename = os.environ.get("PRETRAINED_HF_FILENAME", "").strip()
+    hf_revision = os.environ.get("PRETRAINED_HF_REVISION", "").strip() or None
+
+    if ckpt_uri:
+        if ckpt_uri.startswith("gs://"):
+            dest_dir = local_root / "pretrained"
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / Path(parse_gcs_uri(ckpt_uri)[1]).name
+            bucket_name, blob_name = parse_gcs_uri(ckpt_uri)
+            bucket = client.bucket(bucket_name)
+            bucket.blob(blob_name).download_to_filename(dest_path)
+            return dest_path
+        if ckpt_uri.startswith("hf://"):
+            hf_ref = ckpt_uri[5:]
+            revision = None
+            if "@" in hf_ref:
+                hf_ref, revision = hf_ref.split("@", 1)
+            if "/" not in hf_ref:
+                raise SystemExit(
+                    "hf:// URI must be hf://<repo_id>/<filename>[@revision]"
+                )
+            repo_id, filename = hf_ref.rsplit("/", 1)
+            path = hf_hub_download(
+                repo_id=repo_id, filename=filename, revision=revision
+            )
+            return Path(path)
+        return Path(ckpt_uri)
+
+    if hf_repo and hf_filename:
+        path = hf_hub_download(
+            repo_id=hf_repo, filename=hf_filename, revision=hf_revision
+        )
+        return Path(path)
+
+    return None
 
 
 def _apply_config_overrides(config_path: Path) -> None:
@@ -433,6 +476,15 @@ def main() -> None:
 
     if local_checkpoint_dir is not None:
         train_args = ensure_arg(train_args, "--checkpoint_dir", str(local_checkpoint_dir))
+
+    pretrained_ckpt = _resolve_pretrained_ckpt(local_root, client)
+    if pretrained_ckpt is not None:
+        train_args = ensure_arg(train_args, "--pretrained_ckpt", str(pretrained_ckpt))
+        if _is_truthy(os.environ.get("PRETRAINED_STRICT")):
+            train_args = ensure_arg(train_args, "--pretrained_strict", "true")
+        pretrained_key = os.environ.get("PRETRAINED_KEY", "").strip()
+        if pretrained_key:
+            train_args = ensure_arg(train_args, "--pretrained_key", pretrained_key)
 
     repo_root = Path(__file__).resolve().parents[1]
     train_script = Path(args.train_script).resolve()
