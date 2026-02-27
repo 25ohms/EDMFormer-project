@@ -83,6 +83,8 @@ TAG="${TAG:-latest}"
 IMAGE_REPO="${REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}"
 IMAGE_URI="${IMAGE_URI:-${IMAGE_REPO}:${TAG}}"
 PULL_IMAGE="${PULL_IMAGE:-1}"
+LOCAL_BUILD="${LOCAL_BUILD:-0}"
+LOCAL_IMAGE_TAG="${LOCAL_IMAGE_TAG:-edmformer-train-local:dev}"
 GPU_DEVICES="${GPU_DEVICES:-0}"
 
 CONFIG_PATH="${CONFIG_PATH:-/app/third_party/EDMFormer/src/SongFormer/configs/SongFormer.yaml}"
@@ -98,8 +100,14 @@ EOF
   exit 1
 fi
 
-if [[ "${PULL_IMAGE}" == "1" ]]; then
-  docker pull "${IMAGE_URI}"
+if [[ "${LOCAL_BUILD}" == "1" ]]; then
+  echo "Building local test image: ${LOCAL_IMAGE_TAG}"
+  docker build -f docker/training.Dockerfile -t "${LOCAL_IMAGE_TAG}" .
+  IMAGE_URI="${LOCAL_IMAGE_TAG}"
+else
+  if [[ "${PULL_IMAGE}" == "1" ]]; then
+    docker pull "${IMAGE_URI}"
+  fi
 fi
 
 CUDA_ARGS=()
