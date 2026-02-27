@@ -18,6 +18,16 @@ from google.cloud import storage
 from omegaconf import OmegaConf
 
 
+def ensure_scipy_inf() -> None:
+    try:
+        import scipy  # type: ignore
+        import numpy as np  # type: ignore
+    except Exception:
+        return
+    if not hasattr(scipy, "inf"):
+        scipy.inf = np.inf
+
+
 def parse_gcs_uri(uri: str) -> tuple[str, str]:
     if not uri.startswith("gs://"):
         raise ValueError(f"Not a GCS URI: {uri}")
@@ -192,6 +202,7 @@ def main() -> None:
 
     ckpt_path = resolve_checkpoint(args)
 
+    ensure_scipy_inf()
     module = __import__(f"models.{hparams.args.model_name}", fromlist=["Model"])
     Model = getattr(module, "Model")
     model = Model(hparams)
