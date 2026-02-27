@@ -15,7 +15,7 @@ COPY third_party/EDMFormer/requirements.txt /app/edmformer_requirements.txt
 RUN python -m pip install --upgrade pip \
     && python -m pip install -r /app/requirements.txt \
     && python -m pip install -r /app/edmformer_requirements.txt \
-    && python -m pip install "scipy<1.15"
+    && python -m pip install "scipy==1.10.1"
 
 COPY . /app
 
