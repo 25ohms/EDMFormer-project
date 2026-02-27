@@ -21,9 +21,8 @@ if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
 fi
 
 GCP_ENV_CONFIG="${GCP_ENV_CONFIG:-config/gcp_env.yaml}"
-if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" || -z "${LABELS_JSONL_GCS:-}" || -z "${SPLIT_IDS_GCS:-}" || -z "${TEST_IDS_GCS:-}" || -z "${EMBEDDINGS_GCS_DIR:-}" ]]; then
-  if [[ -f "${GCP_ENV_CONFIG}" ]]; then
-    eval "$("${PYTHON_BIN}" - <<'PY'
+if [[ -f "${GCP_ENV_CONFIG}" ]]; then
+  eval "$("${PYTHON_BIN}" - <<'PY'
 import os
 from pathlib import Path
 
@@ -53,8 +52,7 @@ for key in ("REGION", "GCP_PROJECT", "ARTIFACT_REPO", "LABELS_JSONL_GCS", "SPLIT
     if value:
         print(f'export {key}="{sh_escape(value)}"')
 PY
-    )"
-  fi
+  )"
 fi
 
 if [[ -z "${REGION:-}" || -z "${GCP_PROJECT:-}" || -z "${ARTIFACT_REPO:-}" ]]; then
@@ -121,6 +119,13 @@ fi
 if [[ -n "${DATASET_TYPE}" ]]; then
   ENV_ARGS+=("-e" "DATASET_TYPE=${DATASET_TYPE}")
 fi
+PYTHONPATH_VALUE="${PYTHONPATH:-}"
+if [[ -n "${PYTHONPATH_VALUE}" ]]; then
+  PYTHONPATH_VALUE="${PYTHONPATH_VALUE}:/app/third_party/EDMFormer/src/SongFormer:/app/src"
+else
+  PYTHONPATH_VALUE="/app/third_party/EDMFormer/src/SongFormer:/app/src"
+fi
+ENV_ARGS+=("-e" "PYTHONPATH=${PYTHONPATH_VALUE}")
 
 CMD=(python /app/src/test.py --config "${CONFIG_PATH}")
 if [[ -n "${CHECKPOINT_DIR}" ]]; then
